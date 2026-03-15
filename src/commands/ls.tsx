@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react"
 import { useKeyboard, useRenderer } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
 import { Spinner } from "../components/spinner"
+import { SkeletonList } from "../components/skeleton"
 import { fetchOpenPRs } from "../lib/github"
 import { shortRepoName } from "../lib/format"
 import type { PullRequest } from "../lib/types"
@@ -148,8 +149,12 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
 
   if (loading) {
     return (
-      <box padding={1}>
-        <Spinner text="Loading PRs across all accounts..." />
+      <box flexDirection="column" width="100%" height="100%">
+        <box paddingX={1} height={1}>
+          <Spinner text="Loading PRs across all accounts..." />
+        </box>
+        <box height={1} />
+        <SkeletonList rows={12} />
       </box>
     )
   }

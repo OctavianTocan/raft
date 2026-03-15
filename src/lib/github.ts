@@ -36,9 +36,16 @@ export function stripStackPrefix(title: string): string {
 }
 
 async function runGh(args: string[]): Promise<string> {
+  // Strip GITHUB_TOKEN and GH_TOKEN from env so gh CLI uses its own keyring auth.
+  // Bun auto-loads .env files, which may contain project-specific tokens that
+  // override gh's auth and cause 401 errors.
+  const cleanEnv = { ...process.env }
+  delete cleanEnv.GITHUB_TOKEN
+  delete cleanEnv.GH_TOKEN
   const proc = Bun.spawn(["gh", ...args], {
     stdout: "pipe",
     stderr: "pipe",
+    env: cleanEnv,
   })
   const stdout = await new Response(proc.stdout).text()
   const stderr = await new Response(proc.stderr).text()
