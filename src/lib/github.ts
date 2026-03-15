@@ -276,51 +276,95 @@ export async function getCurrentRepo(): Promise<string | null> {
   }
 }
 
+/** Helper: try fetching with account switching for repos that may need different auth */
+async function tryMultiAccountFetch<T>(
+  fetchFn: () => Promise<T>
+): Promise<T> {
+  const accounts = await getGhAccounts()
+  const originalAccount = await getActiveAccount()
+
+  // Try with current account first
+  try {
+    return await fetchFn()
+  } catch (firstError) {
+    // If there's only one account, rethrow
+    if (accounts.length <= 1) {
+      throw firstError
+    }
+
+    // Try other accounts
+    for (const account of accounts) {
+      if (account === originalAccount) continue
+      try {
+        await switchAccount(account)
+        const result = await fetchFn()
+        // Restore original account before returning
+        if (originalAccount) {
+          try { await switchAccount(originalAccount) } catch {}
+        }
+        return result
+      } catch {
+        continue
+      }
+    }
+
+    // Restore original account
+    if (originalAccount) {
+      try { await switchAccount(originalAccount) } catch {}
+    }
+    throw firstError
+  }
+}
+
 /** Fetch detailed PR metadata: additions, deletions, comments count, reviews. */
 export async function fetchPRDetails(repo: string, prNumber: number): Promise<PRDetails> {
-  const [prJson, reviewsJson] = await Promise.all([
-    runGh([
-      "api", `repos/${repo}/pulls/${prNumber}`,
-      "--jq", "{additions, deletions, comments, head: .head.ref}",
-    ]),
-    runGh([
-      "api", `repos/${repo}/pulls/${prNumber}/reviews`,
-      "--jq", "[.[] | {user: .user.login, state: .state}]",
-    ]),
-  ])
+  return tryMultiAccountFetch(async () => {
+    const [prJson, reviewsJson] = await Promise.all([
+      runGh([
+        "api", `repos/${repo}/pulls/${prNumber}`,
+        "--jq", "{additions, deletions, comments, head: .head.ref}",
+      ]),
+      runGh([
+        "api", `repos/${repo}/pulls/${prNumber}/reviews`,
+        "--jq", "[.[] | {user: .user.login, state: .state}]",
+      ]),
+    ])
 
-  const pr = JSON.parse(prJson)
-  const reviews: Review[] = JSON.parse(reviewsJson)
+    const pr = JSON.parse(prJson)
+    const reviews: Review[] = JSON.parse(reviewsJson)
 
-  return {
-    additions: pr.additions,
-    deletions: pr.deletions,
-    commentCount: pr.comments,
-    reviews,
-    headRefName: pr.head,
-  }
+    return {
+      additions: pr.additions,
+      deletions: pr.deletions,
+      commentCount: pr.comments,
+      reviews,
+      headRefName: pr.head,
+    }
+  })
 }
 
 /** Fetch full PR data for the preview panel: body, conversation comments, code comments. */
 export async function fetchPRPanelData(repo: string, prNumber: number): Promise<PRPanelData> {
-  const [bodyJson, issueCommentsJson, codeCommentsJson] = await Promise.all([
-    runGh([
-      "api", `repos/${repo}/pulls/${prNumber}`,
-      "--jq", ".body",
-    ]),
-    runGh([
-      "api", `repos/${repo}/issues/${prNumber}/comments`,
-      "--jq", "[.[] | {author: .user.login, body: .body, createdAt: .created_at, authorAssociation: .author_association}]",
-    ]),
-    runGh([
-      "api", `repos/${repo}/pulls/${prNumber}/comments`,
-      "--jq", "[.[] | {author: .user.login, body: .body, path: .path, line: (.line // .original_line // 0), diffHunk: .diff_hunk, createdAt: .created_at}]",
-    ]),
-  ])
+  return tryMultiAccountFetch(async () => {
+    const [bodyJson, issueCommentsJson, codeCommentsJson] = await Promise.all([
+      runGh([
+        "api", `repos/${repo}/pulls/${prNumber}`,
+        "--jq", ".body",
+      ]),
+      runGh([
+        "api", `repos/${repo}/issues/${prNumber}/comments`,
+        "--jq", "[.[] | {author: .user.login, body: .body, createdAt: .created_at, authorAssociation: .author_association}]",
+      ]),
+      runGh([
+        "api", `repos/${repo}/pulls/${prNumber}/comments`,
+        "--jq", "[.[] | {author: .user.login, body: .body, path: .path, line: (.line // .original_line // 0), diffHunk: .diff_hunk, createdAt: .created_at}]",
+      ]),
+    ])
 
-  const body = bodyJson || ""
-  const comments: Comment[] = JSON.parse(issueCommentsJson || "[]")
-  const codeComments: CodeComment[] = JSON.parse(codeCommentsJson || "[]")
+    const body = bodyJson || ""
+    const comments: Comment[] = JSON.parse(issueCommentsJson || "[]")
+    const codeComments: CodeComment[] = JSON.parse(codeCommentsJson || "[]")
 
-  return { body, comments, codeComments }
+    return { body, comments, codeComments }
+  })
 }
