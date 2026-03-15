@@ -300,25 +300,39 @@ export function PRTable({ prs, selectedIndex, density, detailsMap, onSelect, gro
                 const isSelected = prIndex === selectedIndex
                 const idx = prIndex
                 prIndex++
-                const details = detailsMap?.get(pr.url)
 
                 const isLast = stackIdx === groupPRs.length - 1
                 const connector = isLast ? "└── " : "├── "
+                const bgColor = isSelected ? "#292e42" : "transparent"
+                const cursor = isSelected ? "▸ " : "  "
+
+                // Check if this is a StackedPR with position/stackSize
+                const stackedPR = pr as any
+                const hasStackInfo = "position" in stackedPR && "stackSize" in stackedPR
 
                 return (
-                  <box key={pr.url} flexDirection="row" paddingLeft={2}>
+                  <box key={pr.url} flexDirection="row" paddingX={2} backgroundColor={bgColor}>
                     <box width={4}>
                       <text fg="#414868">{connector}</text>
                     </box>
+                    <box width={2}>
+                      <text fg={isSelected ? "#7aa2f7" : "transparent"}>{cursor}</text>
+                    </box>
+                    {hasStackInfo && (
+                      <box width={8}>
+                        <text fg="#bb9af7">[{stackedPR.position}/{stackedPR.stackSize}]</text>
+                      </box>
+                    )}
+                    <box width={8}>
+                      <text fg="#7aa2f7">#{pr.number}</text>
+                    </box>
                     <box flexGrow={1}>
-                      <PRRow
-                        pr={pr}
-                        isSelected={isSelected}
-                        index={idx}
-                        density={density}
-                        details={details}
-                        onSelect={onSelect}
-                      />
+                      <text fg="#c0caf5">{pr.title}</text>
+                    </box>
+                    <box width={8}>
+                      <text fg={pr.isDraft ? "#6b7089" : "#9ece6a"}>
+                        {pr.isDraft ? "DRAFT" : "OPEN"}
+                      </text>
                     </box>
                   </box>
                 )
@@ -368,25 +382,38 @@ export function PRTable({ prs, selectedIndex, density, detailsMap, onSelect, gro
                     const isSelected = prIndex === selectedIndex
                     const idx = prIndex
                     prIndex++
-                    const details = detailsMap?.get(pr.url)
 
                     const isLast = prIdx === stackPRs.length - 1
                     const connector = isLast ? "  └── " : "  ├── "
+                    const bgColor = isSelected ? "#292e42" : "transparent"
+                    const cursor = isSelected ? "▸ " : "  "
+
+                    const stackedPR = pr as any
+                    const hasStackInfo = "position" in stackedPR && "stackSize" in stackedPR
 
                     return (
-                      <box key={pr.url} flexDirection="row">
+                      <box key={pr.url} flexDirection="row" paddingX={2} backgroundColor={bgColor}>
                         <box width={6}>
                           <text fg="#414868">{connector}</text>
                         </box>
+                        <box width={2}>
+                          <text fg={isSelected ? "#7aa2f7" : "transparent"}>{cursor}</text>
+                        </box>
+                        {hasStackInfo && (
+                          <box width={8}>
+                            <text fg="#bb9af7">[{stackedPR.position}/{stackedPR.stackSize}]</text>
+                          </box>
+                        )}
+                        <box width={8}>
+                          <text fg="#7aa2f7">#{pr.number}</text>
+                        </box>
                         <box flexGrow={1}>
-                          <PRRow
-                            pr={pr}
-                            isSelected={isSelected}
-                            index={idx}
-                            density={density}
-                            details={details}
-                            onSelect={onSelect}
-                          />
+                          <text fg="#c0caf5">{pr.title}</text>
+                        </box>
+                        <box width={8}>
+                          <text fg={pr.isDraft ? "#6b7089" : "#9ece6a"}>
+                            {pr.isDraft ? "DRAFT" : "OPEN"}
+                          </text>
                         </box>
                       </box>
                     )
