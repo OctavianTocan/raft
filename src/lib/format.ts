@@ -28,6 +28,17 @@ export function truncate(str: string, max: number): string {
   return str.slice(0, max - 1) + "\u2026"
 }
 
+/**
+ * Truncate and pad text to exactly fit a fixed width box.
+ * This prevents OpenTUI rendering artifacts when text changes length.
+ */
+export function truncateFixed(str: string, width: number): string {
+  if (str.length >= width) {
+    return str.slice(0, width - 1) + "\u2026"
+  }
+  return str.padEnd(width, " ")
+}
+
 /** Deduplicate reviews by user (last review wins), then count approved/changes_requested. */
 export function formatReviewStatus(reviews: Review[]): string {
   const byUser = new Map<string, Review>()

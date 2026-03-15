@@ -1,6 +1,6 @@
 import React from "react"
 import type { PullRequest, Density, PRDetails } from "../lib/types"
-import { formatRelativeAge, formatReviewStatus, formatLinesChanged, shortRepoName, truncate } from "../lib/format"
+import { formatRelativeAge, formatReviewStatus, formatLinesChanged, shortRepoName, truncate, truncateFixed } from "../lib/format"
 import type { GroupedData, GroupMode } from "../lib/grouping"
 import { GroupHeader } from "./group-header"
 
@@ -100,7 +100,7 @@ function PRRow({ pr, isSelected, index, density, details, onSelect }: PRRowProps
           <text fg="#7aa2f7">#{pr.number}</text>
         </box>
         <box width={20}>
-          <text fg="#bb9af7">{truncate(repo, 18)}</text>
+          <text fg="#bb9af7">{truncateFixed(repo, 18)}</text>
         </box>
         <box flexGrow={1}>
           <text fg="#c0caf5">{truncate(pr.title, 60)}</text>
@@ -135,7 +135,7 @@ function PRRow({ pr, isSelected, index, density, details, onSelect }: PRRowProps
           <text fg="#7aa2f7">#{pr.number}</text>
         </box>
         <box width={20}>
-          <text fg="#bb9af7">{truncate(repo, 18)}</text>
+          <text fg="#bb9af7">{truncateFixed(repo, 18)}</text>
         </box>
         <box flexGrow={1}>
           <text fg="#c0caf5">{truncate(pr.title, 45)}</text>
