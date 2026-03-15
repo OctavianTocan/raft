@@ -12,8 +12,6 @@ describe("parseSearchResults", () => {
         state: "open",
         isDraft: false,
         repository: { nameWithOwner: "acme/api" },
-        headRefName: "feat/add-feature",
-        baseRefName: "main",
         createdAt: "2026-03-15T00:00:00Z",
       },
     ])
@@ -22,6 +20,9 @@ describe("parseSearchResults", () => {
     expect(result[0].repo).toBe("acme/api")
     expect(result[0].number).toBe(42)
     expect(result[0].body).toBe("First line of body")
+    // search results don't include branch info
+    expect(result[0].headRefName).toBe("")
+    expect(result[0].baseRefName).toBe("")
   })
 
   test("truncates body to first line, max 80 chars", () => {
@@ -35,8 +36,6 @@ describe("parseSearchResults", () => {
         state: "open",
         isDraft: false,
         repository: { nameWithOwner: "a/b" },
-        headRefName: "h",
-        baseRefName: "b",
         createdAt: "2026-01-01T00:00:00Z",
       },
     ])
@@ -54,8 +53,23 @@ describe("parseSearchResults", () => {
         state: "open",
         isDraft: false,
         repository: { nameWithOwner: "a/b" },
-        headRefName: "h",
-        baseRefName: "b",
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+    ])
+    const result = parseSearchResults(raw)
+    expect(result[0].body).toBe("")
+  })
+
+  test("handles null body", () => {
+    const raw = JSON.stringify([
+      {
+        number: 1,
+        title: "T",
+        url: "u",
+        body: null,
+        state: "open",
+        isDraft: false,
+        repository: { nameWithOwner: "a/b" },
         createdAt: "2026-01-01T00:00:00Z",
       },
     ])

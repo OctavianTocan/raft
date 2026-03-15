@@ -9,8 +9,6 @@ interface RawSearchResult {
   state: string
   isDraft: boolean
   repository: { nameWithOwner: string }
-  headRefName: string
-  baseRefName: string
   createdAt: string
 }
 
@@ -26,8 +24,9 @@ export function parseSearchResults(jsonStr: string): PullRequest[] {
       state: pr.state,
       isDraft: pr.isDraft,
       repo: pr.repository.nameWithOwner,
-      headRefName: pr.headRefName,
-      baseRefName: pr.baseRefName,
+      // gh search prs doesn't return branch info; only available via gh pr list
+      headRefName: "",
+      baseRefName: "",
       createdAt: pr.createdAt,
     }
   })
@@ -58,7 +57,7 @@ export async function fetchOpenPRs(author?: string): Promise<PullRequest[]> {
     authorFlag,
     "--state=open",
     "--limit=100",
-    "--json", "number,title,url,body,state,repository,isDraft,headRefName,baseRefName,createdAt",
+    "--json", "number,title,url,body,state,repository,isDraft,createdAt",
   ])
   if (!json) return []
   return parseSearchResults(json)
