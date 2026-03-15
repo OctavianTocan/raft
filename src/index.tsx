@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { createCliRenderer } from "@opentui/core"
 import { createRoot } from "@opentui/react"
 import { LsCommand } from "./commands/ls"
@@ -36,7 +37,7 @@ function HelpScreen() {
     <box flexDirection="column" padding={2}>
       <text>
         <span fg="#7aa2f7">
-          <strong>pr-cli</strong>
+          <strong>raft</strong>
         </span>
         <span fg="#565f89"> - TUI for GitHub PR management</span>
       </text>
@@ -46,27 +47,27 @@ function HelpScreen() {
       </text>
       <box paddingLeft={2} flexDirection="column" gap={0}>
         <text>
-          <span fg="#9ece6a">pr ls</span>
+          <span fg="#9ece6a">raft ls</span>
           <span fg="#565f89">                    List all your open PRs</span>
         </text>
         <text>
-          <span fg="#9ece6a">pr ls --repo=web</span>
+          <span fg="#9ece6a">raft ls --repo=web</span>
           <span fg="#565f89">           Filter PRs by repo name</span>
         </text>
         <text>
-          <span fg="#9ece6a">pr ls --author=user</span>
+          <span fg="#9ece6a">raft ls --author=user</span>
           <span fg="#565f89">        List PRs by specific author</span>
         </text>
         <text>
-          <span fg="#9ece6a">pr stack</span>
+          <span fg="#9ece6a">raft stack</span>
           <span fg="#565f89">                  Show detected PR stacks</span>
         </text>
         <text>
-          <span fg="#9ece6a">pr stack sync</span>
+          <span fg="#9ece6a">raft stack sync</span>
           <span fg="#565f89">             Rename PRs and update stack comments</span>
         </text>
         <text>
-          <span fg="#9ece6a">pr stack --repo=owner/repo</span>
+          <span fg="#9ece6a">raft stack --repo=owner/repo</span>
           <span fg="#565f89"> Stack for specific repo</span>
         </text>
       </box>

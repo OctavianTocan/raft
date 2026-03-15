@@ -1,8 +1,11 @@
 {
-  "name": "pr-cli",
+  "name": "raft",
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
+  "bin": {
+    "raft": "src/index.tsx"
+  },
   "scripts": {
     "start": "bun run src/index.tsx",
     "dev": "bun --watch run src/index.tsx",
