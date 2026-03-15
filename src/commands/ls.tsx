@@ -8,6 +8,7 @@ import { shortRepoName } from "../lib/format"
 import { PRCache } from "../lib/cache"
 import { PreviewPanel } from "../components/preview-panel"
 import type { PullRequest, Density, PRDetails, PanelTab, PRPanelData } from "../lib/types"
+import { groupByRepo, groupByStack, groupByRepoAndStack, type GroupMode, type GroupedData } from "../lib/grouping"
 
 interface LsCommandProps {
   author?: string
@@ -42,6 +43,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [flash, setFlash] = useState<string | null>(null)
   const [density, setDensity] = useState<Density>("compact")
   const [detailsMap, setDetailsMap] = useState<Map<string, PRDetails>>(new Map())
+  const [groupMode, setGroupMode] = useState<GroupMode>("none")
   const [panelOpen, setPanelOpen] = useState(false)
   const [panelTab, setPanelTab] = useState<PanelTab>("body")
   const [panelScroll, setPanelScroll] = useState(0)
@@ -127,6 +129,20 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     })
     return prs
   }, [allPRs, repoFilter, statusFilter, searchQuery, sortMode])
+
+  // Grouped data computation
+  const groupedData = useMemo(() => {
+    if (groupMode === "none") return null
+
+    if (groupMode === "repo") {
+      return groupByRepo(filteredPRs)
+    } else if (groupMode === "stack") {
+      return groupByStack(filteredPRs)
+    } else if (groupMode === "repo-stack") {
+      return groupByRepoAndStack(filteredPRs)
+    }
+    return null
+  }, [filteredPRs, groupMode])
 
   useEffect(() => {
     if (selectedIndex >= filteredPRs.length) {
@@ -330,23 +346,45 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       })
       setSelectedIndex(0)
     } else if (key.name === "r") {
-      if (repoFilter === null) {
-        if (repos.length > 0) setRepoFilter(repos[0])
+      if (groupMode === "repo") {
+        showFlash("Repo filter disabled in Repo view")
       } else {
-        const idx = repos.indexOf(repoFilter)
-        if (idx >= 0 && idx < repos.length - 1) {
-          setRepoFilter(repos[idx + 1])
+        if (repoFilter === null) {
+          if (repos.length > 0) setRepoFilter(repos[0])
         } else {
-          setRepoFilter(null)
+          const idx = repos.indexOf(repoFilter)
+          if (idx >= 0 && idx < repos.length - 1) {
+            setRepoFilter(repos[idx + 1])
+          } else {
+            setRepoFilter(null)
+          }
         }
+        setSelectedIndex(0)
       }
-      setSelectedIndex(0)
     } else if (key.name === "v") {
       setDensity((d) => {
         if (d === "compact") return "normal"
         if (d === "normal") return "detailed"
         return "compact"
       })
+    } else if (key.name === "g") {
+      setGroupMode((mode) => {
+        if (mode === "none") {
+          showFlash("Group by: Repo")
+          return "repo"
+        }
+        if (mode === "repo") {
+          showFlash("Group by: Stack")
+          return "stack"
+        }
+        if (mode === "stack") {
+          showFlash("Group by: Repo → Stack")
+          return "repo-stack"
+        }
+        showFlash("Group by: None")
+        return "none"
+      })
+      setSelectedIndex(0)
     } else if (key.name === "p") {
       setPanelOpen(true)
       setPanelScroll(0)
@@ -387,7 +425,9 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           </text>
         </box>
         <box>
-          <text fg="#9aa5ce">{filteredPRs.length} PRs  sort: {SORT_LABELS[sortMode]}  view: {density}</text>
+          <text fg="#9aa5ce">
+            {filteredPRs.length} PRs  sort: {SORT_LABELS[sortMode]}  view: {density}  group: {groupMode === "none" ? "None" : groupMode === "repo-stack" ? "Repo→Stack" : groupMode}
+          </text>
         </box>
       </box>
 
@@ -443,6 +483,8 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
                 selectedIndex={visibleSelectedIndex}
                 density="compressed"
                 onSelect={handleSelect}
+                groupedData={groupedData}
+                groupMode={groupMode}
               />
             </box>
           </box>
@@ -468,6 +510,8 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
             density={density}
             detailsMap={detailsMap}
             onSelect={handleSelect}
+            groupedData={groupedData}
+            groupMode={groupMode}
           />
           {filteredPRs.length > listHeight && (
             <box paddingX={1} height={1}>
@@ -511,7 +555,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
             </text>
           ) : (
             <text fg="#6b7089">
-              Enter: open  c: copy  /: search  r: repo  s: sort  v: view  p: preview  Tab: status  q: quit
+              Enter: open  c: copy  /: search  r: repo  s: sort  v: view  g: group  p: preview  Tab: status  q: quit
             </text>
           )}
         </box>

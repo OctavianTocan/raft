@@ -1,6 +1,8 @@
 import React from "react"
 import type { PullRequest, Density, PRDetails } from "../lib/types"
 import { formatRelativeAge, formatReviewStatus, formatLinesChanged, shortRepoName, truncate } from "../lib/format"
+import type { GroupedData, GroupMode } from "../lib/grouping"
+import { GroupHeader } from "./group-header"
 
 interface PRTableProps {
   prs: PullRequest[]
@@ -8,6 +10,8 @@ interface PRTableProps {
   density: Density
   detailsMap?: Map<string, PRDetails>
   onSelect?: (index: number) => void
+  groupedData?: GroupedData[] | null
+  groupMode?: GroupMode
 }
 
 interface PRRowProps {
@@ -220,7 +224,7 @@ function PRRow({ pr, isSelected, index, density, details, onSelect }: PRRowProps
   return null
 }
 
-export function PRTable({ prs, selectedIndex, density, detailsMap, onSelect }: PRTableProps) {
+export function PRTable({ prs, selectedIndex, density, detailsMap, onSelect, groupedData, groupMode }: PRTableProps) {
   if (prs.length === 0) {
     return (
       <box padding={2}>
@@ -229,23 +233,197 @@ export function PRTable({ prs, selectedIndex, density, detailsMap, onSelect }: P
     )
   }
 
+  // Flat rendering (no grouping)
+  if (groupMode === "none" || !groupedData) {
+    return (
+      <box flexDirection="column" width="100%">
+        {prs.map((pr, i) => {
+          const prKey = pr.url
+          const details = detailsMap?.get(prKey)
+
+          return (
+            <PRRow
+              key={prKey}
+              pr={pr}
+              isSelected={i === selectedIndex}
+              index={i}
+              density={density}
+              details={details}
+              onSelect={onSelect}
+            />
+          )
+        })}
+      </box>
+    )
+  }
+
+  // Grouped rendering
+  let prIndex = 0
   return (
     <box flexDirection="column" width="100%">
-      {prs.map((pr, i) => {
-        const prKey = pr.url
-        const details = detailsMap?.get(prKey)
+      {groupedData.map((group, groupIdx) => {
+        if (group.type === "repo") {
+          const groupPRs = group.prs
+          return (
+            <box key={groupIdx} flexDirection="column">
+              <GroupHeader title={shortRepoName(group.repo)} count={groupPRs.length} width={100} />
+              {groupPRs.map((pr) => {
+                const isSelected = prIndex === selectedIndex
+                const idx = prIndex
+                prIndex++
+                const details = detailsMap?.get(pr.url)
+                return (
+                  <PRRow
+                    key={pr.url}
+                    pr={pr}
+                    isSelected={isSelected}
+                    index={idx}
+                    density={density}
+                    details={details}
+                    onSelect={onSelect}
+                  />
+                )
+              })}
+            </box>
+          )
+        }
 
-        return (
-          <PRRow
-            key={prKey}
-            pr={pr}
-            isSelected={i === selectedIndex}
-            index={i}
-            density={density}
-            details={details}
-            onSelect={onSelect}
-          />
-        )
+        if (group.type === "stack") {
+          const groupPRs = group.prs
+          return (
+            <box key={groupIdx} flexDirection="column">
+              <GroupHeader title={`Stack: ${shortRepoName(group.repo)}`} count={groupPRs.length} width={100} />
+              <box paddingX={2} height={1}>
+                <text fg="#414868">● main</text>
+              </box>
+              {groupPRs.map((pr, stackIdx) => {
+                const isSelected = prIndex === selectedIndex
+                const idx = prIndex
+                prIndex++
+                const details = detailsMap?.get(pr.url)
+
+                const isLast = stackIdx === groupPRs.length - 1
+                const connector = isLast ? "└── " : "├── "
+
+                return (
+                  <box key={pr.url} flexDirection="row" paddingLeft={2}>
+                    <box width={4}>
+                      <text fg="#414868">{connector}</text>
+                    </box>
+                    <box flexGrow={1}>
+                      <PRRow
+                        pr={pr}
+                        isSelected={isSelected}
+                        index={idx}
+                        density={density}
+                        details={details}
+                        onSelect={onSelect}
+                      />
+                    </box>
+                  </box>
+                )
+              })}
+            </box>
+          )
+        }
+
+        if (group.type === "standalone") {
+          const groupPRs = group.prs
+          return (
+            <box key={groupIdx} flexDirection="column">
+              <GroupHeader title="Standalone PRs" count={groupPRs.length} width={100} />
+              {groupPRs.map((pr) => {
+                const isSelected = prIndex === selectedIndex
+                const idx = prIndex
+                prIndex++
+                const details = detailsMap?.get(pr.url)
+                return (
+                  <PRRow
+                    key={pr.url}
+                    pr={pr}
+                    isSelected={isSelected}
+                    index={idx}
+                    density={density}
+                    details={details}
+                    onSelect={onSelect}
+                  />
+                )
+              })}
+            </box>
+          )
+        }
+
+        if (group.type === "hierarchical") {
+          return (
+            <box key={groupIdx} flexDirection="column">
+              <GroupHeader title={shortRepoName(group.repo)} count={group.stacks.flat().length + group.standalone.length} width={100} />
+
+              {/* Render stacks */}
+              {group.stacks.map((stackPRs, stackIdx) => (
+                <box key={`stack-${stackIdx}`} flexDirection="column" paddingLeft={2}>
+                  <box height={1}>
+                    <text fg="#414868">  ● main</text>
+                  </box>
+                  {stackPRs.map((pr, prIdx) => {
+                    const isSelected = prIndex === selectedIndex
+                    const idx = prIndex
+                    prIndex++
+                    const details = detailsMap?.get(pr.url)
+
+                    const isLast = prIdx === stackPRs.length - 1
+                    const connector = isLast ? "  └── " : "  ├── "
+
+                    return (
+                      <box key={pr.url} flexDirection="row">
+                        <box width={6}>
+                          <text fg="#414868">{connector}</text>
+                        </box>
+                        <box flexGrow={1}>
+                          <PRRow
+                            pr={pr}
+                            isSelected={isSelected}
+                            index={idx}
+                            density={density}
+                            details={details}
+                            onSelect={onSelect}
+                          />
+                        </box>
+                      </box>
+                    )
+                  })}
+                </box>
+              ))}
+
+              {/* Render standalone PRs in this repo */}
+              {group.standalone.length > 0 && (
+                <box flexDirection="column" paddingLeft={2} paddingTop={1}>
+                  <box paddingBottom={0.5}>
+                    <text fg="#6b7089">Standalone:</text>
+                  </box>
+                  {group.standalone.map((pr) => {
+                    const isSelected = prIndex === selectedIndex
+                    const idx = prIndex
+                    prIndex++
+                    const details = detailsMap?.get(pr.url)
+                    return (
+                      <PRRow
+                        key={pr.url}
+                        pr={pr}
+                        isSelected={isSelected}
+                        index={idx}
+                        density={density}
+                        details={details}
+                        onSelect={onSelect}
+                      />
+                    )
+                  })}
+                </box>
+              )}
+            </box>
+          )
+        }
+
+        return null
       })}
     </box>
   )
