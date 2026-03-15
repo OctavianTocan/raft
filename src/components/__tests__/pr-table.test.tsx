@@ -40,7 +40,7 @@ const mockPRs: PullRequest[] = [
 
 test("PRTable renders PR numbers and short repo names", async () => {
   testSetup = await testRender(
-    <PRTable prs={mockPRs} selectedIndex={0} />,
+    <PRTable prs={mockPRs} selectedIndex={0} density="compact" />,
     { width: 100, height: 10 }
   )
   await testSetup.renderOnce()
@@ -56,7 +56,7 @@ test("PRTable renders PR numbers and short repo names", async () => {
 
 test("PRTable shows selection cursor on selected row", async () => {
   testSetup = await testRender(
-    <PRTable prs={mockPRs} selectedIndex={0} />,
+    <PRTable prs={mockPRs} selectedIndex={0} density="compact" />,
     { width: 100, height: 10 }
   )
   await testSetup.renderOnce()
@@ -66,7 +66,7 @@ test("PRTable shows selection cursor on selected row", async () => {
 
 test("PRTable shows status dots", async () => {
   testSetup = await testRender(
-    <PRTable prs={mockPRs} selectedIndex={0} />,
+    <PRTable prs={mockPRs} selectedIndex={0} density="compact" />,
     { width: 100, height: 10 }
   )
   await testSetup.renderOnce()
@@ -77,7 +77,7 @@ test("PRTable shows status dots", async () => {
 
 test("PRTable shows relative age", async () => {
   testSetup = await testRender(
-    <PRTable prs={mockPRs} selectedIndex={0} />,
+    <PRTable prs={mockPRs} selectedIndex={0} density="compact" />,
     { width: 100, height: 10 }
   )
   await testSetup.renderOnce()
@@ -88,7 +88,7 @@ test("PRTable shows relative age", async () => {
 
 test("PRTable shows empty message when no PRs", async () => {
   testSetup = await testRender(
-    <PRTable prs={[]} selectedIndex={0} />,
+    <PRTable prs={[]} selectedIndex={0} density="compact" />,
     { width: 100, height: 10 }
   )
   await testSetup.renderOnce()
@@ -99,7 +99,7 @@ test("PRTable shows empty message when no PRs", async () => {
 test("PRTable selection changes highlighted row", async () => {
   // First PR selected
   testSetup = await testRender(
-    <PRTable prs={mockPRs} selectedIndex={0} />,
+    <PRTable prs={mockPRs} selectedIndex={0} density="compact" />,
     { width: 100, height: 10 }
   )
   await testSetup.renderOnce()
@@ -108,7 +108,7 @@ test("PRTable selection changes highlighted row", async () => {
 
   // Second PR selected
   testSetup = await testRender(
-    <PRTable prs={mockPRs} selectedIndex={1} />,
+    <PRTable prs={mockPRs} selectedIndex={1} density="compact" />,
     { width: 100, height: 10 }
   )
   await testSetup.renderOnce()

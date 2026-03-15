@@ -295,7 +295,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
 
       {/* PR List - manual windowing, no scrollbox */}
       <box flexDirection="column" flexGrow={1} overflow="hidden">
-        <PRTable prs={visiblePRs} selectedIndex={visibleSelectedIndex} onSelect={handleSelect} />
+        <PRTable prs={visiblePRs} selectedIndex={visibleSelectedIndex} density="compact" onSelect={handleSelect} />
         {filteredPRs.length > listHeight && (
           <box paddingX={1} height={1}>
             <text fg="#6b7089">
