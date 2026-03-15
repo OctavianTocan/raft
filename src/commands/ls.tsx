@@ -13,6 +13,15 @@ interface LsCommandProps {
 }
 
 type StatusFilter = "all" | "open" | "draft"
+type SortMode = "repo" | "number" | "title" | "age" | "status"
+const SORT_MODES: SortMode[] = ["repo", "number", "title", "age", "status"]
+const SORT_LABELS: Record<SortMode, string> = {
+  repo: "Repo",
+  number: "#",
+  title: "Title",
+  age: "Age",
+  status: "Status",
+}
 
 export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandProps) {
   const renderer = useRenderer()
@@ -26,6 +35,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [searchQuery, setSearchQuery] = useState("")
   const [repoFilter, setRepoFilter] = useState<string | null>(initialRepoFilter ?? null)
   const [currentRepo, setCurrentRepo] = useState<string | null>(null)
+  const [sortMode, setSortMode] = useState<SortMode>("repo")
   const [flash, setFlash] = useState<string | null>(null)
 
   // Detect current repo on mount
@@ -85,8 +95,25 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         String(pr.number).includes(q)
       )
     }
+    // Sort
+    prs = [...prs].sort((a, b) => {
+      switch (sortMode) {
+        case "repo": {
+          const rc = a.repo.localeCompare(b.repo)
+          return rc !== 0 ? rc : a.number - b.number
+        }
+        case "number": return a.number - b.number
+        case "title": return a.title.localeCompare(b.title)
+        case "age": return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        case "status": {
+          const sc = Number(a.isDraft) - Number(b.isDraft)
+          return sc !== 0 ? sc : a.repo.localeCompare(b.repo)
+        }
+        default: return 0
+      }
+    })
     return prs
-  }, [allPRs, repoFilter, statusFilter, searchQuery])
+  }, [allPRs, repoFilter, statusFilter, searchQuery, sortMode])
 
   useEffect(() => {
     if (selectedIndex >= filteredPRs.length) {
@@ -164,6 +191,12 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         return "all"
       })
       setSelectedIndex(0)
+    } else if (key.name === "s") {
+      setSortMode((m) => {
+        const idx = SORT_MODES.indexOf(m)
+        return SORT_MODES[(idx + 1) % SORT_MODES.length]
+      })
+      setSelectedIndex(0)
     } else if (key.name === "r") {
       // Cycle repo filter: null -> repo1 -> repo2 -> ... -> null
       if (repoFilter === null) {
@@ -213,7 +246,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           </text>
         </box>
         <box>
-          <text fg="#9aa5ce">{filteredPRs.length} PRs  /: search  r: repo  q: quit</text>
+          <text fg="#9aa5ce">{filteredPRs.length} PRs  sort: {SORT_LABELS[sortMode]}</text>
         </box>
       </box>
 
@@ -298,7 +331,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
             <text fg="#9ece6a">{flash}</text>
           ) : (
             <text fg="#6b7089">
-              Enter: open  c: copy URL  /: search  r: repo  Tab: status  q: quit
+              Enter: open  c: copy  /: search  r: repo  s: sort  Tab: status  q: quit
             </text>
           )}
         </box>
