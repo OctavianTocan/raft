@@ -20,9 +20,9 @@ const mockPRs: PullRequest[] = [
     state: "open",
     isDraft: false,
     repo: "acme/api",
-    headRefName: "feat/rate-limit",
-    baseRefName: "main",
-    createdAt: "2026-03-15T00:00:00Z",
+    headRefName: "",
+    baseRefName: "",
+    createdAt: new Date(Date.now() - 2 * 86400000).toISOString(), // 2 days ago
   },
   {
     number: 7,
@@ -32,35 +32,72 @@ const mockPRs: PullRequest[] = [
     state: "open",
     isDraft: true,
     repo: "acme/web",
-    headRefName: "fix/login",
-    baseRefName: "main",
-    createdAt: "2026-03-14T00:00:00Z",
+    headRefName: "",
+    baseRefName: "",
+    createdAt: new Date(Date.now() - 14 * 86400000).toISOString(), // 2 weeks ago
   },
 ]
 
-test("PRTable renders PR data", async () => {
+test("PRTable renders PR numbers and short repo names", async () => {
   testSetup = await testRender(
-    <PRTable prs={mockPRs} />,
-    { width: 120, height: 20 }
+    <PRTable prs={mockPRs} selectedIndex={0} />,
+    { width: 100, height: 10 }
   )
   await testSetup.renderOnce()
   const frame = testSetup.captureCharFrame()
 
   expect(frame).toContain("#42")
-  expect(frame).toContain("acme/api")
-  expect(frame).toContain("Add rate limiting")
-  expect(frame).toContain("OPEN")
   expect(frame).toContain("#7")
-  expect(frame).toContain("DRAFT")
+  expect(frame).toContain("api")
+  expect(frame).toContain("web")
+  expect(frame).toContain("Add rate limiting")
+  expect(frame).toContain("Fix login redirect")
 })
 
-test("PRTable shows empty message when no PRs", async () => {
+test("PRTable shows selection cursor on selected row", async () => {
   testSetup = await testRender(
-    <PRTable prs={[]} />,
-    { width: 120, height: 10 }
+    <PRTable prs={mockPRs} selectedIndex={0} />,
+    { width: 100, height: 10 }
   )
   await testSetup.renderOnce()
   const frame = testSetup.captureCharFrame()
 
-  expect(frame).toContain("No open PRs found")
+  // First row should have the cursor indicator
+  expect(frame).toContain("\u25B8")
+})
+
+test("PRTable shows status dots", async () => {
+  testSetup = await testRender(
+    <PRTable prs={mockPRs} selectedIndex={0} />,
+    { width: 100, height: 10 }
+  )
+  await testSetup.renderOnce()
+  const frame = testSetup.captureCharFrame()
+
+  // Filled dot for open, hollow for draft
+  expect(frame).toContain("\u25CF")
+  expect(frame).toContain("\u25CB")
+})
+
+test("PRTable shows relative age", async () => {
+  testSetup = await testRender(
+    <PRTable prs={mockPRs} selectedIndex={0} />,
+    { width: 100, height: 10 }
+  )
+  await testSetup.renderOnce()
+  const frame = testSetup.captureCharFrame()
+
+  expect(frame).toContain("2d")
+  expect(frame).toContain("2w")
+})
+
+test("PRTable shows empty message when no PRs", async () => {
+  testSetup = await testRender(
+    <PRTable prs={[]} selectedIndex={0} />,
+    { width: 100, height: 10 }
+  )
+  await testSetup.renderOnce()
+  const frame = testSetup.captureCharFrame()
+
+  expect(frame).toContain("No PRs match")
 })

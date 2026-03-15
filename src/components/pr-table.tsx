@@ -1,91 +1,57 @@
 import type { PullRequest } from "../lib/types"
+import { formatRelativeAge, shortRepoName, truncate } from "../lib/format"
 
 interface PRTableProps {
   prs: PullRequest[]
+  selectedIndex: number
 }
 
-function truncate(str: string, max: number): string {
-  return str.length > max ? str.slice(0, max - 1) + "..." : str
-}
-
-function PRRow({ pr, isEven }: { pr: PullRequest; isEven: boolean }) {
-  const status = pr.isDraft ? "DRAFT" : "OPEN"
-  const statusColor = pr.isDraft ? "#888888" : "#00FF00"
-  const bgColor = isEven ? "#1a1a2e" : "#16161e"
+function PRRow({ pr, isSelected }: { pr: PullRequest; isSelected: boolean }) {
+  const dotColor = pr.isDraft ? "#565f89" : "#9ece6a"
+  const dot = pr.isDraft ? "\u25CB" : "\u25CF"
+  const cursor = isSelected ? "\u25B8" : " "
+  const bgColor = isSelected ? "#292e42" : "transparent"
+  const age = formatRelativeAge(pr.createdAt)
+  const repo = shortRepoName(pr.repo)
 
   return (
-    <box flexDirection="row" backgroundColor={bgColor} paddingX={1}>
-      <box width={8}>
-        <text>
-          <span fg="#7aa2f7">#{pr.number}</span>
-        </text>
+    <box flexDirection="row" backgroundColor={bgColor} paddingX={1} height={1}>
+      <box width={2}>
+        <text fg={isSelected ? "#7aa2f7" : "#565f89"}>{cursor}</text>
       </box>
-      <box width={35}>
-        <text fg="#888888">{truncate(pr.repo, 33)}</text>
+      <box width={2}>
+        <text fg={dotColor}>{dot}</text>
       </box>
-      <box width={40}>
-        <text fg="#c0caf5">{truncate(pr.title, 38)}</text>
+      <box width={6}>
+        <text fg="#7aa2f7">#{pr.number}</text>
+      </box>
+      <box width={20}>
+        <text fg="#bb9af7">{truncate(repo, 18)}</text>
       </box>
       <box flexGrow={1}>
-        <text fg="#565f89">{truncate(pr.body, 50)}</text>
+        <text fg="#c0caf5">{truncate(pr.title, 60)}</text>
       </box>
-      <box width={8}>
-        <text fg={statusColor}>{status}</text>
+      <box width={5}>
+        <text fg="#565f89">{age}</text>
       </box>
     </box>
   )
 }
 
-function TableHeader() {
-  return (
-    <box flexDirection="row" paddingX={1} border borderColor="#414868">
-      <box width={8}>
-        <text>
-          <strong>PR</strong>
-        </text>
-      </box>
-      <box width={35}>
-        <text>
-          <strong>Repo</strong>
-        </text>
-      </box>
-      <box width={40}>
-        <text>
-          <strong>Title</strong>
-        </text>
-      </box>
-      <box flexGrow={1}>
-        <text>
-          <strong>Description</strong>
-        </text>
-      </box>
-      <box width={8}>
-        <text>
-          <strong>Status</strong>
-        </text>
-      </box>
-    </box>
-  )
-}
-
-export function PRTable({ prs }: PRTableProps) {
+export function PRTable({ prs, selectedIndex }: PRTableProps) {
   if (prs.length === 0) {
     return (
       <box padding={2}>
-        <text fg="#888888">No open PRs found.</text>
+        <text fg="#565f89">No PRs match your filters.</text>
       </box>
     )
   }
 
   return (
     <box flexDirection="column" width="100%">
-      <TableHeader />
       {prs.map((pr, i) => (
-        <PRRow key={`${pr.repo}-${pr.number}`} pr={pr} isEven={i % 2 === 0} />
+        <PRRow key={`${pr.repo}-${pr.number}`} pr={pr} isSelected={i === selectedIndex} />
       ))}
-      <box paddingTop={1} paddingX={1}>
-        <text fg="#565f89">COUNT={prs.length}</text>
-      </box>
     </box>
   )
 }
