@@ -1,3 +1,4 @@
+import React from "react"
 import type { PullRequest, PRPanelData, PanelTab } from "../lib/types"
 import { shortRepoName } from "../lib/format"
 import { Spinner } from "./spinner"
@@ -13,13 +14,21 @@ interface PreviewPanelProps {
   scrollOffset: number
   width: number
   height: number
+  onContentHeight?: (height: number) => void
 }
 
-export function PreviewPanel({ pr, panelData, loading, tab, scrollOffset, width, height }: PreviewPanelProps) {
+export function PreviewPanel({ pr, panelData, loading, tab, scrollOffset, width, height, onContentHeight }: PreviewPanelProps) {
   const commentCount = panelData?.comments.length ?? 0
   const codeCount = panelData?.codeComments.length ?? 0
   // 4 lines reserved: title, subtitle, divider, tab bar
   const contentHeight = Math.max(1, height - 4)
+
+  // Calculate scrollbar position if we have content height callback
+  const [totalContentHeight, setTotalContentHeight] = React.useState(0)
+  const handleContentHeight = (h: number) => {
+    setTotalContentHeight(h)
+    if (onContentHeight) onContentHeight(h)
+  }
 
   return (
     <box flexDirection="column" width={width} height={height} borderColor="#292e42" border>
@@ -64,27 +73,46 @@ export function PreviewPanel({ pr, panelData, loading, tab, scrollOffset, width,
         <text fg="#292e42">{"\u2500".repeat(Math.max(1, width - 4))}</text>
       </box>
 
-      {/* Content */}
-      <box flexGrow={1} overflow="hidden">
-        {loading ? (
-          <box paddingX={1}>
-            <Spinner text="Loading..." />
-          </box>
-        ) : panelData ? (
-          <>
-            {tab === "body" && (
-              <PanelBody body={panelData.body} width={width - 2} scrollOffset={scrollOffset} maxLines={contentHeight} />
-            )}
-            {tab === "comments" && (
-              <PanelComments comments={panelData.comments} width={width - 2} scrollOffset={scrollOffset} maxLines={contentHeight} />
-            )}
-            {tab === "code" && (
-              <PanelCode codeComments={panelData.codeComments} width={width - 2} scrollOffset={scrollOffset} maxLines={contentHeight} />
-            )}
-          </>
-        ) : (
-          <box paddingX={1}>
-            <text fg="#f7768e">Failed to load data.</text>
+      {/* Content with scrollbar */}
+      <box flexDirection="row" flexGrow={1} overflow="hidden">
+        <box flexGrow={1} overflow="hidden">
+          {loading ? (
+            <box paddingX={1}>
+              <Spinner text="Loading..." />
+            </box>
+          ) : panelData ? (
+            <>
+              {tab === "body" && (
+                <PanelBody body={panelData.body} width={width - 4} scrollOffset={scrollOffset} maxLines={contentHeight} onContentHeight={handleContentHeight} />
+              )}
+              {tab === "comments" && (
+                <PanelComments comments={panelData.comments} width={width - 4} scrollOffset={scrollOffset} maxLines={contentHeight} onContentHeight={handleContentHeight} />
+              )}
+              {tab === "code" && (
+                <PanelCode codeComments={panelData.codeComments} width={width - 4} scrollOffset={scrollOffset} maxLines={contentHeight} onContentHeight={handleContentHeight} />
+              )}
+            </>
+          ) : (
+            <box paddingX={1}>
+              <text fg="#f7768e">Failed to load data.</text>
+            </box>
+          )}
+        </box>
+
+        {/* Scrollbar indicator */}
+        {totalContentHeight > contentHeight && (
+          <box flexDirection="column" width={1} height={contentHeight}>
+            {Array.from({ length: contentHeight }).map((_, i) => {
+              const scrollPct = scrollOffset / Math.max(1, totalContentHeight - contentHeight)
+              const barHeight = Math.max(1, Math.floor(contentHeight * (contentHeight / totalContentHeight)))
+              const barStart = Math.floor(scrollPct * (contentHeight - barHeight))
+              const isBar = i >= barStart && i < barStart + barHeight
+              return (
+                <box key={i} height={1}>
+                  <text fg={isBar ? "#7aa2f7" : "#292e42"}>{isBar ? "\u2588" : "\u2502"}</text>
+                </box>
+              )
+            })}
           </box>
         )}
       </box>

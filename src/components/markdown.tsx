@@ -63,9 +63,10 @@ interface MarkdownViewProps {
   width: number
   scrollOffset: number
   maxLines: number
+  onContentHeight?: (height: number) => void
 }
 
-export function MarkdownView({ content, width, scrollOffset, maxLines }: MarkdownViewProps) {
+export function MarkdownView({ content, width, scrollOffset, maxLines, onContentHeight }: MarkdownViewProps) {
   const lines = parseMarkdownLines(content)
 
   // Flatten to renderable lines with styles
@@ -131,6 +132,11 @@ export function MarkdownView({ content, width, scrollOffset, maxLines }: Markdow
   }
 
   const visible = rendered.slice(scrollOffset, scrollOffset + maxLines)
+
+  // Report actual content height
+  if (onContentHeight) {
+    onContentHeight(rendered.length)
+  }
 
   return (
     <box flexDirection="column" width={width}>

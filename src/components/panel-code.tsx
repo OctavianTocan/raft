@@ -7,10 +7,12 @@ interface PanelCodeProps {
   width: number
   scrollOffset: number
   maxLines: number
+  onContentHeight?: (height: number) => void
 }
 
-export function PanelCode({ codeComments, width, scrollOffset, maxLines }: PanelCodeProps) {
+export function PanelCode({ codeComments, width, scrollOffset, maxLines, onContentHeight }: PanelCodeProps) {
   if (codeComments.length === 0) {
+    if (onContentHeight) onContentHeight(1)
     return (
       <box paddingX={1}>
         <text fg="#6b7089">No code comments.</text>
@@ -114,6 +116,10 @@ export function PanelCode({ codeComments, width, scrollOffset, maxLines }: Panel
   }
 
   const visible = lines.slice(scrollOffset, scrollOffset + maxLines)
+
+  if (onContentHeight) {
+    onContentHeight(lines.length)
+  }
 
   return (
     <box flexDirection="column" width={width}>

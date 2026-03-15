@@ -48,6 +48,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [splitRatio, setSplitRatio] = useState(0.6)
   const [panelData, setPanelData] = useState<PRPanelData | null>(null)
   const [panelLoading, setPanelLoading] = useState(false)
+  const [panelContentHeight, setPanelContentHeight] = useState(0)
   const cacheRef = useRef(new PRCache())
 
   // Detect current repo on mount
@@ -251,10 +252,11 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
 
     if (panelOpen) {
       // Panel open mode
+      const scrollIncrement = key.shift ? 5 : 1
       if (key.name === "j") {
-        setPanelScroll((s) => s + 1)
+        setPanelScroll((s) => Math.min(Math.max(0, panelContentHeight - (termHeight - 9)), s + scrollIncrement))
       } else if (key.name === "k") {
-        setPanelScroll((s) => Math.max(0, s - 1))
+        setPanelScroll((s) => Math.max(0, s - scrollIncrement))
       } else if (key.name === "down") {
         setSelectedIndex((i) => Math.min(filteredPRs.length - 1, i + 1))
         setPanelScroll(0)
@@ -454,6 +456,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
               scrollOffset={panelScroll}
               width={Math.floor(termWidth * splitRatio)}
               height={termHeight - 6}
+              onContentHeight={setPanelContentHeight}
             />
           )}
         </box>
