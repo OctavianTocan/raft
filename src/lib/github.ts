@@ -72,44 +72,40 @@ export async function getGhAccounts(): Promise<string[]> {
   }
 }
 
+/** Get the currently active gh account. */
+async function getActiveAccount(): Promise<string | null> {
+  try {
+    const output = await runGh(["auth", "status"])
+    const lines = output.split("\n")
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes("Active account: true")) {
+        // Account name is on a preceding line
+        for (let j = i - 1; j >= 0; j--) {
+          const match = lines[j].match(/account\s+(\S+)/)
+          if (match) return match[1]
+        }
+      }
+    }
+  } catch { /* ignore */ }
+  return null
+}
+
 async function switchAccount(username: string): Promise<void> {
   await runGh(["auth", "switch", "--user", username])
 }
 
-/** Fetch open PRs across all gh accounts, deduped by URL. */
+/** Fetch open PRs across all gh accounts, deduped by URL.
+ *  Uses --author=<username> instead of switching accounts, so no side effects. */
 export async function fetchAllAccountPRs(): Promise<PullRequest[]> {
   const accounts = await getGhAccounts()
   const allPRs: PullRequest[] = []
   const seen = new Set<string>()
 
-  // Remember which account was active so we can restore it
-  let originalAccount: string | null = null
-  try {
-    const statusOutput = await runGh(["auth", "status"])
-    for (const line of statusOutput.split("\n")) {
-      if (line.includes("Active account: true")) {
-        // The account name is on the line before this one
-        const prevMatch = statusOutput.split("\n")
-          .find(l => l.includes("Active account: true"))
-        // Actually parse more carefully
-      }
-      const match = line.match(/account\s+(\S+)/)
-      if (match && statusOutput.split("\n").some((l, i, arr) =>
-        arr[i - 1]?.includes(match![1]) && l.includes("Active account: false") === false
-      )) {
-        // This is getting complex. Simpler approach:
-      }
-    }
-  } catch { /* ignore */ }
-
   for (const account of accounts) {
-    if (accounts.length > 1) {
-      try { await switchAccount(account) } catch { continue }
-    }
     try {
       const json = await runGh([
         "search", "prs",
-        "--author=@me",
+        `--author=${account}`,
         "--state=open",
         "--limit=100",
         "--json", "number,title,url,body,state,repository,isDraft,createdAt",
@@ -122,12 +118,7 @@ export async function fetchAllAccountPRs(): Promise<PullRequest[]> {
           }
         }
       }
-    } catch { /* skip account if it fails */ }
-  }
-
-  // Switch back to first account (usually the personal one)
-  if (accounts.length > 1) {
-    try { await switchAccount(accounts[0]) } catch { /* ignore */ }
+    } catch { /* skip account if query fails */ }
   }
 
   return allPRs
@@ -152,6 +143,7 @@ export async function fetchOpenPRs(author?: string): Promise<PullRequest[]> {
 /** Try fetching repo PRs, attempting each account if needed. */
 export async function fetchRepoPRs(repo: string): Promise<PullRequest[]> {
   const accounts = await getGhAccounts()
+  const originalAccount = await getActiveAccount()
 
   for (const account of accounts) {
     if (accounts.length > 1) {
@@ -165,9 +157,9 @@ export async function fetchRepoPRs(repo: string): Promise<PullRequest[]> {
         "--limit=100",
         "--json", "number,title,url,body,state,isDraft,headRefName,baseRefName,createdAt",
       ])
-      // Switch back before returning
-      if (accounts.length > 1) {
-        try { await switchAccount(accounts[0]) } catch { /* ignore */ }
+      // Restore original account before returning
+      if (accounts.length > 1 && originalAccount) {
+        try { await switchAccount(originalAccount) } catch { /* ignore */ }
       }
       if (!json) return []
       const raw = JSON.parse(json) as Array<{
@@ -199,9 +191,9 @@ export async function fetchRepoPRs(repo: string): Promise<PullRequest[]> {
     }
   }
 
-  // Restore first account
-  if (accounts.length > 1) {
-    try { await switchAccount(accounts[0]) } catch { /* ignore */ }
+  // Restore original account
+  if (accounts.length > 1 && originalAccount) {
+    try { await switchAccount(originalAccount) } catch { /* ignore */ }
   }
 
   return []
