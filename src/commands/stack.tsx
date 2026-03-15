@@ -2,6 +2,7 @@ import { useState, useEffect } from "react"
 import { useKeyboard, useRenderer } from "@opentui/react"
 import { fetchRepoPRs, fetchOpenPRs, getCurrentRepo, updatePRTitle, upsertStackComment } from "../lib/github"
 import { detectStacks, buildStackComment, formatStackedTitle } from "../lib/stack"
+import { Spinner } from "../components/spinner"
 import type { Stack } from "../lib/types"
 
 interface StackCommandProps {
@@ -17,7 +18,7 @@ function StackView({ stack, syncing }: { stack: Stack; syncing: boolean }) {
           <span fg="#7aa2f7">
             <strong>Stack in {stack.repo}</strong>
           </span>
-          <span fg="#565f89"> ({stack.prs.length} PRs)</span>
+          <span fg="#9aa5ce"> ({stack.prs.length} PRs)</span>
         </text>
       </box>
       {stack.prs.map((pr) => (
@@ -34,7 +35,7 @@ function StackView({ stack, syncing }: { stack: Stack; syncing: boolean }) {
             <text fg="#c0caf5">{pr.originalTitle}</text>
           </box>
           <box width={8}>
-            <text fg={pr.isDraft ? "#888888" : "#00FF00"}>
+            <text fg={pr.isDraft ? "#6b7089" : "#9ece6a"}>
               {pr.isDraft ? "DRAFT" : "OPEN"}
             </text>
           </box>
@@ -42,7 +43,7 @@ function StackView({ stack, syncing }: { stack: Stack; syncing: boolean }) {
       ))}
       {syncing && (
         <box paddingX={1} paddingTop={1}>
-          <text fg="#e0af68">Syncing stack metadata...</text>
+          <Spinner text="Syncing stack metadata..." color="#e0af68" />
         </box>
       )}
     </box>
@@ -55,6 +56,7 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
   const [error, setError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncDone, setSyncDone] = useState(false)
+  const [loadingStatus, setLoadingStatus] = useState("Detecting stacks across your repos...")
 
   useKeyboard((key) => {
     if (key.name === "q" || key.name === "escape") {
@@ -68,17 +70,17 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
         let allStacks: Stack[] = []
 
         if (repo) {
-          // Explicit repo specified
+          setLoadingStatus(`Scanning ${repo}...`)
           const prs = await fetchRepoPRs(repo)
           allStacks = detectStacks(prs)
         } else {
-          // Try current repo first; if not in one, scan all repos
           const currentRepo = await getCurrentRepo()
           if (currentRepo) {
+            setLoadingStatus(`Scanning ${currentRepo}...`)
             const prs = await fetchRepoPRs(currentRepo)
             allStacks = detectStacks(prs)
           } else {
-            // Not in a repo: fetch all PRs, group by repo, detect stacks in each
+            setLoadingStatus("Fetching your PRs across all accounts...")
             const allPRs = await fetchOpenPRs()
             const byRepo = new Map<string, typeof allPRs>()
             for (const pr of allPRs) {
@@ -86,16 +88,15 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
               existing.push(pr)
               byRepo.set(pr.repo, existing)
             }
-            // For repos with 2+ PRs, fetch full PR data (with branch info) and detect stacks
-            for (const [repoName, prs] of byRepo) {
-              if (prs.length < 2) continue
+            const multiPRRepos = [...byRepo.entries()].filter(([, prs]) => prs.length >= 2)
+            for (let i = 0; i < multiPRRepos.length; i++) {
+              const [repoName] = multiPRRepos[i]
+              setLoadingStatus(`Checking ${repoName} (${i + 1}/${multiPRRepos.length})...`)
               try {
                 const repoPRs = await fetchRepoPRs(repoName)
                 const repoStacks = detectStacks(repoPRs)
                 allStacks.push(...repoStacks)
-              } catch {
-                // Can't access this repo with any account, skip
-              }
+              } catch { /* skip */ }
             }
           }
         }
@@ -125,7 +126,7 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
   if (error) {
     return (
       <box padding={1}>
-        <text fg="#ff0000">Error: {error}</text>
+        <text fg="#f7768e">Error: {error}</text>
       </box>
     )
   }
@@ -133,7 +134,7 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
   if (stacks === null) {
     return (
       <box padding={1}>
-        <text fg="#888888">Detecting stacks across your repos...</text>
+        <Spinner text={loadingStatus} />
       </box>
     )
   }
@@ -141,7 +142,7 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
   if (stacks.length === 0) {
     return (
       <box padding={1}>
-        <text fg="#888888">No stacks detected. PRs must target each other's branches to form a stack.</text>
+        <text fg="#9aa5ce">No stacks detected. PRs must target each other's branches to form a stack.</text>
       </box>
     )
   }
@@ -157,7 +158,7 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
         </box>
       )}
       <box paddingX={1} paddingTop={1}>
-        <text fg="#565f89">Press q to exit</text>
+        <text fg="#6b7089">Press q to exit</text>
       </box>
     </box>
   )

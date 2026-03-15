@@ -2,17 +2,24 @@
 import { createCliRenderer } from "@opentui/core"
 import { createRoot } from "@opentui/react"
 import { useKeyboard, useRenderer } from "@opentui/react"
+import { useState } from "react"
 import { LsCommand } from "./commands/ls"
 import { StackCommand } from "./commands/stack"
 
+type Command = "ls" | "stack" | "stack-sync" | "home" | "help"
+
 function parseArgs(argv: string[]): {
-  command: "ls" | "stack" | "help"
+  command: Command
   author?: string
   repoFilter?: string
-  sync: boolean
 } {
   const args = argv.slice(2)
   const command = args[0] as string | undefined
+
+  // --help or -h: plain text, no TUI
+  if (args.includes("--help") || args.includes("-h")) {
+    return { command: "help" }
+  }
 
   let author: string | undefined
   let repoFilter: string | undefined
@@ -28,70 +35,98 @@ function parseArgs(argv: string[]): {
     }
   }
 
-  if (command === "ls") return { command: "ls", author, repoFilter, sync: false }
-  if (command === "stack") return { command: "stack", repoFilter, sync }
-  return { command: "help", sync: false }
+  if (command === "ls") return { command: "ls", author, repoFilter }
+  if (command === "stack") return { command: sync ? "stack-sync" : "stack", repoFilter }
+  return { command: "home" }
 }
 
-function HelpScreen() {
+function printHelp() {
+  console.log(`raft - TUI for GitHub PR management
+
+Usage:
+  raft                     Interactive home screen
+  raft ls                  List all your open PRs
+  raft ls --repo=<name>    Filter PRs by repo name
+  raft ls --author=<user>  List PRs by specific author
+  raft stack               Show detected PR stacks
+  raft stack sync          Rename PRs and update stack comments
+  raft stack --repo=<repo> Stack for specific repo
+  raft --help              Show this help message`)
+}
+
+function HomeScreen() {
   const renderer = useRenderer()
+  const [activeCommand, setActiveCommand] = useState<Command | null>(null)
+
   useKeyboard((key) => {
+    if (activeCommand) return // let the sub-command handle keys
     if (key.name === "q" || key.name === "escape") {
       renderer.destroy()
     }
   })
+
+  if (activeCommand === "ls") return <LsCommand />
+  if (activeCommand === "stack") return <StackCommand repo={undefined} sync={false} />
+  if (activeCommand === "stack-sync") return <StackCommand repo={undefined} sync={true} />
+
+  const commands = [
+    { label: "List PRs", key: "ls" as Command, desc: "Browse all your open PRs", color: "#9ece6a" },
+    { label: "View Stacks", key: "stack" as Command, desc: "Detect stacked PR chains", color: "#7aa2f7" },
+    { label: "Sync Stacks", key: "stack-sync" as Command, desc: "Rename and link stacked PRs", color: "#e0af68" },
+  ]
+
   return (
     <box flexDirection="column" padding={2}>
       <text>
         <span fg="#7aa2f7">
           <strong>raft</strong>
         </span>
-        <span fg="#565f89"> - TUI for GitHub PR management</span>
+        <span fg="#9aa5ce"> - TUI for GitHub PR management</span>
       </text>
       <box height={1} />
-      <text>
-        <strong>Usage:</strong>
-      </text>
-      <box paddingLeft={2} flexDirection="column" gap={0}>
-        <text>
-          <span fg="#9ece6a">raft ls</span>
-          <span fg="#565f89">                    List all your open PRs</span>
-        </text>
-        <text>
-          <span fg="#9ece6a">raft ls --repo=web</span>
-          <span fg="#565f89">           Filter PRs by repo name</span>
-        </text>
-        <text>
-          <span fg="#9ece6a">raft ls --author=user</span>
-          <span fg="#565f89">        List PRs by specific author</span>
-        </text>
-        <text>
-          <span fg="#9ece6a">raft stack</span>
-          <span fg="#565f89">                  Show detected PR stacks</span>
-        </text>
-        <text>
-          <span fg="#9ece6a">raft stack sync</span>
-          <span fg="#565f89">             Rename PRs and update stack comments</span>
-        </text>
-        <text>
-          <span fg="#9ece6a">raft stack --repo=owner/repo</span>
-          <span fg="#565f89"> Stack for specific repo</span>
-        </text>
+      <box flexDirection="column" gap={1}>
+        {commands.map((cmd) => (
+          <box
+            key={cmd.key}
+            flexDirection="row"
+            paddingX={2}
+            paddingY={1}
+            border
+            borderStyle="rounded"
+            borderColor="#292e42"
+            onMouseDown={() => setActiveCommand(cmd.key)}
+          >
+            <box width={16}>
+              <text>
+                <span fg={cmd.color}>
+                  <strong>{cmd.label}</strong>
+                </span>
+              </text>
+            </box>
+            <box flexGrow={1}>
+              <text fg="#9aa5ce">{cmd.desc}</text>
+            </box>
+          </box>
+        ))}
       </box>
       <box height={1} />
-      <text fg="#565f89">Press q to exit</text>
+      <text fg="#6b7089">Click a command or press q to exit. Use --help for CLI usage.</text>
     </box>
   )
 }
 
 const config = parseArgs(process.argv)
 
+// --help: print to stdout and exit, no TUI
+if (config.command === "help") {
+  printHelp()
+  process.exit(0)
+}
+
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
 })
 
-// Hard quit: only Ctrl+C is the universal escape hatch.
-// q and Escape are handled by individual commands (context-sensitive).
 renderer.keyInput.on("keypress", (key) => {
   if (key.ctrl && key.name === "c") {
     renderer.destroy()
@@ -105,9 +140,12 @@ switch (config.command) {
     root.render(<LsCommand author={config.author} repoFilter={config.repoFilter} />)
     break
   case "stack":
-    root.render(<StackCommand repo={config.repoFilter} sync={config.sync} />)
+    root.render(<StackCommand repo={config.repoFilter} sync={false} />)
+    break
+  case "stack-sync":
+    root.render(<StackCommand repo={config.repoFilter} sync={true} />)
     break
   default:
-    root.render(<HelpScreen />)
+    root.render(<HomeScreen />)
     break
 }

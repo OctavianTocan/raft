@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { useKeyboard, useRenderer } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
+import { Spinner } from "../components/spinner"
 import { fetchOpenPRs } from "../lib/github"
 import { shortRepoName } from "../lib/format"
 import type { PullRequest } from "../lib/types"
@@ -148,7 +149,7 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
   if (loading) {
     return (
       <box padding={1}>
-        <text fg="#7aa2f7">Loading PRs...</text>
+        <Spinner text="Loading PRs across all accounts..." />
       </box>
     )
   }
