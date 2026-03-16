@@ -16,6 +16,7 @@ type Command = "ls" | "stack" | "stack-sync" | "log" | "merge" | "sync"
 interface Config {
   command: Command
   author?: string
+  allAuthors?: boolean
   repoFilter?: string
   branchName?: string
   commitMessage?: string
@@ -30,6 +31,7 @@ function parseArgs(argv: string[]): Config {
   }
 
   let author: string | undefined
+  let allAuthors = false
   let repoFilter: string | undefined
   let branchName: string | undefined
   let commitMessage: string | undefined
@@ -38,6 +40,8 @@ function parseArgs(argv: string[]): Config {
     const arg = args[i]
     if (arg.startsWith("--author=")) {
       author = arg.split("=")[1]
+    } else if (arg === "--all") {
+      allAuthors = true
     } else if (arg.startsWith("--repo=")) {
       repoFilter = arg.split("=")[1]
     } else if (arg === "-m" && args[i + 1]) {
@@ -49,7 +53,7 @@ function parseArgs(argv: string[]): Config {
     }
   }
 
-  if (command === "ls") return { command: "ls", author, repoFilter }
+  if (command === "ls") return { command: "ls", author: allAuthors ? undefined : author, allAuthors, repoFilter }
   if (command === "stack") {
     const hasSync = args.includes("sync")
     return { command: hasSync ? "stack-sync" : "stack", repoFilter }
@@ -70,6 +74,7 @@ function printHelp() {
 Usage:
   raft                         Interactive home screen
   raft ls                      List all your open PRs
+  raft ls --all                List all open PRs (all authors)
   raft ls --repo=<name>        Filter PRs by repo name
   raft ls --author=<user>      List PRs by specific author
   raft log                     Visual stack graph
@@ -174,7 +179,7 @@ const root = createRoot(renderer)
 
 switch (config.command) {
   case "ls":
-    root.render(<LsCommand author={config.author} repoFilter={config.repoFilter} />)
+    root.render(<LsCommand author={config.allAuthors ? "" : config.author} repoFilter={config.repoFilter} />)
     break
   case "log":
     root.render(<LogCommand repo={config.repoFilter} />)

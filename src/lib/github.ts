@@ -10,6 +10,7 @@ interface RawSearchResult {
   isDraft: boolean
   repository: { nameWithOwner: string }
   createdAt: string
+  author?: { login: string }
 }
 
 export function parseSearchResults(jsonStr: string): PullRequest[] {
@@ -27,6 +28,7 @@ export function parseSearchResults(jsonStr: string): PullRequest[] {
       headRefName: "",
       baseRefName: "",
       createdAt: pr.createdAt,
+      author: pr.author?.login,
     }
   })
 }
@@ -154,6 +156,18 @@ export async function fetchOpenPRs(
   author?: string,
   onProgress?: (status: string) => void,
 ): Promise<PullRequest[]> {
+  if (author === "") {
+    // Empty string means fetch all PRs across all repos the user has access to
+    onProgress?.("Fetching all open PRs...")
+    const json = await runGh([
+      "search", "prs",
+      "--state=open",
+      "--limit=1000",
+      "--json", "number,title,url,body,state,repository,isDraft,createdAt,author",
+    ])
+    if (!json) return []
+    return parseSearchResults(json)
+  }
   if (author) {
     onProgress?.(`Fetching PRs for ${author}...`)
     const json = await runGh([
@@ -161,7 +175,7 @@ export async function fetchOpenPRs(
       `--author=${author}`,
       "--state=open",
       "--limit=100",
-      "--json", "number,title,url,body,state,repository,isDraft,createdAt",
+      "--json", "number,title,url,body,state,repository,isDraft,createdAt,author",
     ])
     if (!json) return []
     return parseSearchResults(json)

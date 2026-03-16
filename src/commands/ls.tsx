@@ -85,17 +85,28 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     load()
   }, [author])
 
-  // Get unique repos for cycling
+  // Get unique repos and authors for cycling
   const repos = useMemo(() => {
     const set = [...new Set(allPRs.map((pr) => pr.repo))].sort()
     return set
   }, [allPRs])
+
+  const authors = useMemo(() => {
+    const set = [...new Set(allPRs.map((pr) => pr.author).filter(Boolean))].sort()
+    return set as string[]
+  }, [allPRs])
+
+  const [authorFilter, setAuthorFilter] = useState<string | null>(null)
 
   const filteredPRs = useMemo(() => {
     let prs = allPRs
     // Repo filter
     if (repoFilter) {
       prs = prs.filter((pr) => pr.repo === repoFilter)
+    }
+    // Author filter
+    if (authorFilter) {
+      prs = prs.filter((pr) => pr.author === authorFilter)
     }
     // Status filter
     if (statusFilter === "open") prs = prs.filter((pr) => !pr.isDraft)
@@ -128,7 +139,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       }
     })
     return prs
-  }, [allPRs, repoFilter, statusFilter, searchQuery, sortMode])
+  }, [allPRs, repoFilter, authorFilter, statusFilter, searchQuery, sortMode])
 
   // Grouped data computation
   const groupedData = useMemo(() => {
@@ -371,6 +382,23 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         return SORT_MODES[(idx + 1) % SORT_MODES.length]
       })
       setSelectedIndex(0)
+    } else if (key.name === "a") {
+      if (authors.length === 0) {
+        showFlash("No authors found")
+      } else if (authorFilter === null) {
+        setAuthorFilter(authors[0])
+        showFlash(`Author: ${authors[0]}`)
+      } else {
+        const idx = authors.indexOf(authorFilter)
+        if (idx >= 0 && idx < authors.length - 1) {
+          setAuthorFilter(authors[idx + 1])
+          showFlash(`Author: ${authors[idx + 1]}`)
+        } else {
+          setAuthorFilter(null)
+          showFlash("Author: All")
+        }
+      }
+      setSelectedIndex(0)
     } else if (key.name === "r") {
       if (groupMode === "repo") {
         showFlash("Repo filter disabled in Repo view")
@@ -475,6 +503,15 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           </text>
         </box>
       </box>
+
+      {/* Author filter */}
+      {authorFilter && (
+        <box flexDirection="row" paddingX={1} height={1}>
+          <text fg="#9aa5ce">
+            Author: <span fg="#bb9af7">{authorFilter}</span>
+          </text>
+        </box>
+      )}
 
       {/* Repo filter */}
       {repoFilter && (
@@ -581,7 +618,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
             </text>
           ) : (
             <text fg="#6b7089">
-              Enter: open  c: copy  /: search  r: repo  s: sort  v: view  g: group  p: preview  Tab: status  q: quit
+              Enter: open  c: copy  /: search  a: author  r: repo  s: sort  v: view  g: group  p: preview  Tab: status  q: quit
             </text>
           )}
         </box>

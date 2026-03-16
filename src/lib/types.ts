@@ -9,6 +9,7 @@ export interface PullRequest {
   headRefName: string
   baseRefName: string
   createdAt: string
+  author?: string
 }
 
 export interface StackedPR extends PullRequest {
