@@ -306,6 +306,29 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           Bun.spawn(["open", selectedPR.url], { stdout: "ignore", stderr: "ignore" })
           showFlash("Opening " + selectedPR.url)
         }
+      } else if (key.name === "e" && panelTab === "files" && panelData && selectedPR) {
+        // Generate AI explanations for file diffs
+        showFlash("Generating explanations...")
+        import("../lib/explain-diff").then(async ({ explainFileDiff }) => {
+          const files = panelData.files
+          const updatedFiles = [...files]
+
+          for (let i = 0; i < updatedFiles.length; i++) {
+            if (!updatedFiles[i].explanation && updatedFiles[i].patch) {
+              const explanation = await explainFileDiff(updatedFiles[i])
+              updatedFiles[i] = { ...updatedFiles[i], explanation }
+            }
+          }
+
+          // Update panel data with explanations
+          setPanelData({ ...panelData, files: updatedFiles })
+          // Update cache
+          cacheRef.current.setPanelData(selectedPR.url, { ...panelData, files: updatedFiles })
+          showFlash(`Generated ${updatedFiles.filter(f => f.explanation).length} explanations`)
+        }).catch((err) => {
+          showFlash("Failed to generate explanations")
+          console.error(err)
+        })
       } else if (key.name === "c" && selectedPR) {
         renderer.copyToClipboardOSC52(selectedPR.url)
         showFlash("Copied URL!")
@@ -554,7 +577,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
             <text fg="#9ece6a">{flash}</text>
           ) : panelOpen ? (
             <text fg="#6b7089">
-              j/k: scroll  1-4: tab  +/-: resize  p: close  Enter: open  c: copy  q: quit
+              j/k: scroll  1-4: tab  e: explain  +/-: resize  p: close  Enter: open  c: copy  q: quit
             </text>
           ) : (
             <text fg="#6b7089">

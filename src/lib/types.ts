@@ -61,6 +61,7 @@ export interface FileDiff {
   changes: number
   patch: string
   previousFilename?: string
+  explanation?: string // AI-generated summary of changes
 }
 
 export interface PRPanelData {

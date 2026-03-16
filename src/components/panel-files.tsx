@@ -33,7 +33,16 @@ export function PanelFiles({ files, width, scrollOffset, maxLines, onContentHeig
       // Summary
       const totalAdd = files.reduce((sum, f) => sum + f.additions, 0)
       const totalDel = files.reduce((sum, f) => sum + f.deletions, 0)
+      const explainedCount = files.filter(f => f.explanation).length
+
       output.push({ fg: "#9aa5ce", text: `${files.length} files changed, +${totalAdd} -${totalDel}` })
+
+      if (explainedCount > 0) {
+        output.push({ fg: "#6b7089", text: `${explainedCount}/${files.length} files explained` })
+      } else {
+        output.push({ fg: "#6b7089", text: "Press 'e' to generate AI explanations" })
+      }
+
       output.push({ fg: "#6b7089", text: "" })
 
       // Show diff for each file
@@ -45,6 +54,13 @@ export function PanelFiles({ files, width, scrollOffset, maxLines, onContentHeig
 
         output.push({ fg: "#7aa2f7", text: `diff --git a/${name} b/${name}` })
         output.push({ fg: "#9aa5ce", text: `+${file.additions} -${file.deletions}` })
+
+        // Show explanation if available
+        if (file.explanation) {
+          output.push({ fg: "#6b7089", text: "" })
+          output.push({ fg: "#bb9af7", text: `📝 ${file.explanation}` })
+          output.push({ fg: "#6b7089", text: "" })
+        }
 
         if (file.patch) {
           const patchLines = file.patch.split("\n")
