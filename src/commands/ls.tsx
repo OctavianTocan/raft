@@ -3,7 +3,7 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
 import { Spinner } from "../components/spinner"
 import { SkeletonList } from "../components/skeleton"
-import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, fetchPRPanelData } from "../lib/github"
+import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, fetchPRPanelData, submitPRReview, postPRComment, replyToReviewComment } from "../lib/github"
 import { shortRepoName } from "../lib/format"
 import { PRCache } from "../lib/cache"
 import { PreviewPanel } from "../components/preview-panel"
@@ -50,6 +50,10 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [panelFullscreen, setPanelFullscreen] = useState(false)
   const [panelData, setPanelData] = useState<PRPanelData | null>(null)
   const [panelLoading, setPanelLoading] = useState(false)
+  // Reply mode: composing a reply to a code comment
+  const [replyMode, setReplyMode] = useState(false)
+  const [replyText, setReplyText] = useState("")
+  const [replyCommentId, setReplyCommentId] = useState<number | null>(null)
   const cacheRef = useRef(new PRCache())
 
   // Detect current repo on mount
@@ -276,6 +280,37 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       return
     }
 
+    // Reply mode: composing a reply to a code review comment
+    if (replyMode) {
+      if (key.name === "escape") {
+        setReplyMode(false)
+        setReplyText("")
+        setReplyCommentId(null)
+        return
+      }
+      if (key.name === "enter" || key.name === "return") {
+        if (replyText.trim() && replyCommentId && selectedPR) {
+          showFlash("Sending reply...")
+          replyToReviewComment(selectedPR.repo, selectedPR.number, replyCommentId, replyText.trim())
+            .then(() => showFlash("Reply sent!"))
+            .catch(() => showFlash("Failed to send reply"))
+        }
+        setReplyMode(false)
+        setReplyText("")
+        setReplyCommentId(null)
+        return
+      }
+      if (key.name === "backspace") {
+        setReplyText((t) => t.slice(0, -1))
+        return
+      }
+      if (key.name.length === 1 && !key.ctrl && !key.meta) {
+        setReplyText((t) => t + key.name)
+        return
+      }
+      return
+    }
+
     if (panelOpen) {
       // Panel open mode: scrolling is handled by the scrollbox natively,
       // so only PR navigation and panel controls are managed here
@@ -341,6 +376,36 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       } else if (key.name === "c" && selectedPR) {
         renderer.copyToClipboardOSC52(selectedPR.url)
         showFlash("Copied URL!")
+      } else if (key.name === "r" && panelTab === "code" && panelData && selectedPR) {
+        // Reply to the most recent code comment
+        const comments = panelData.codeComments
+        if (comments.length > 0) {
+          const lastComment = comments[comments.length - 1]
+          setReplyCommentId(lastComment.id)
+          setReplyMode(true)
+          setReplyText("")
+          showFlash(`Replying to @${lastComment.author} on ${lastComment.path}...`)
+        } else {
+          showFlash("No code comments to reply to")
+        }
+      } else if (key.sequence === "A" && selectedPR) {
+        // Shift+A: approve the PR
+        showFlash("Approving PR...")
+        submitPRReview(selectedPR.repo, selectedPR.number, "APPROVE")
+          .then(() => showFlash("Approved!"))
+          .catch(() => showFlash("Failed to approve"))
+      } else if (key.sequence === "X" && selectedPR) {
+        // Shift+X: request changes (with a default body)
+        showFlash("Requesting changes...")
+        submitPRReview(selectedPR.repo, selectedPR.number, "REQUEST_CHANGES", "Changes requested from raft TUI")
+          .then(() => showFlash("Changes requested!"))
+          .catch(() => showFlash("Failed to submit review"))
+      } else if (key.sequence === "C" && selectedPR) {
+        // Shift+C: post a general comment on the PR
+        showFlash("Posting comment...")
+        postPRComment(selectedPR.repo, selectedPR.number, "Reviewed in raft TUI")
+          .then(() => showFlash("Comment posted!"))
+          .catch(() => showFlash("Failed to post comment"))
       } else if (key.name === "q") {
         renderer.destroy()
       }
@@ -607,11 +672,18 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           </box>
         )}
         <box flexDirection="row" height={1}>
-          {flash ? (
+          {replyMode ? (
+            <text>
+              <span fg="#e0af68">reply: </span>
+              <span fg="#c0caf5">{replyText}</span>
+              <span fg="#7aa2f7">_</span>
+              <span fg="#6b7089"> (Enter: send, Esc: cancel)</span>
+            </text>
+          ) : flash ? (
             <text fg="#9ece6a">{flash}</text>
           ) : panelOpen ? (
             <text fg="#6b7089">
-              1-4: tab  e: explain  f: fullscreen  +/-: resize  p: close  Enter: open  c: copy  q: quit
+              1-4: tab  r: reply  e: explain  A: approve  X: req changes  f: fullscreen  +/-: resize  p: close  q: quit
             </text>
           ) : (
             <text fg="#6b7089">

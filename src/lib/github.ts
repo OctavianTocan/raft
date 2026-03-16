@@ -371,7 +371,7 @@ export async function fetchPRPanelData(repo: string, prNumber: number): Promise<
       ]),
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}/comments`,
-        "--jq", "[.[] | {author: .user.login, body: .body, path: .path, line: (.line // .original_line // 0), diffHunk: .diff_hunk, createdAt: .created_at}]",
+        "--jq", "[.[] | {id: .id, author: .user.login, body: .body, path: .path, line: (.line // .original_line // 0), diffHunk: .diff_hunk, createdAt: .created_at}]",
       ]),
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}/files`,
@@ -385,5 +385,85 @@ export async function fetchPRPanelData(repo: string, prNumber: number): Promise<
     const files: FileDiff[] = JSON.parse(filesJson || "[]")
 
     return { body, comments, codeComments, files }
+  })
+}
+
+/** Valid review event types for the GitHub PR review API. */
+export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT"
+
+/**
+ * Submits a PR review (approve, request changes, or comment) via the GitHub API.
+ *
+ * Uses the pull request review endpoint to create a review with the specified
+ * event type and optional body text. Handles multi-account auth automatically.
+ *
+ * @param repo - Full repository name in `owner/repo` format.
+ * @param prNumber - The pull request number.
+ * @param event - The review action: APPROVE, REQUEST_CHANGES, or COMMENT.
+ * @param body - Optional review comment body (required for REQUEST_CHANGES).
+ */
+export async function submitPRReview(
+  repo: string,
+  prNumber: number,
+  event: ReviewEvent,
+  body?: string,
+): Promise<void> {
+  return tryMultiAccountFetch(async () => {
+    const args = [
+      "api", "--method", "POST",
+      `repos/${repo}/pulls/${prNumber}/reviews`,
+      "--field", `event=${event}`,
+    ]
+    if (body) {
+      args.push("--field", `body=${body}`)
+    }
+    await runGh(args)
+  })
+}
+
+/**
+ * Replies to an existing review comment on a pull request.
+ *
+ * Uses the pull request review comment reply endpoint. The `commentId` is
+ * the ID of the review comment being replied to (from the Code tab).
+ *
+ * @param repo - Full repository name in `owner/repo` format.
+ * @param prNumber - The pull request number.
+ * @param commentId - The ID of the review comment to reply to.
+ * @param body - The reply text.
+ */
+export async function replyToReviewComment(
+  repo: string,
+  prNumber: number,
+  commentId: number,
+  body: string,
+): Promise<void> {
+  return tryMultiAccountFetch(async () => {
+    await runGh([
+      "api", "--method", "POST",
+      `repos/${repo}/pulls/${prNumber}/comments/${commentId}/replies`,
+      "--field", `body=${body}`,
+    ])
+  })
+}
+
+/**
+ * Posts a general comment on a pull request (issue-level, not inline).
+ *
+ * @param repo - Full repository name in `owner/repo` format.
+ * @param prNumber - The pull request number.
+ * @param body - The comment text.
+ */
+export async function postPRComment(
+  repo: string,
+  prNumber: number,
+  body: string,
+): Promise<void> {
+  return tryMultiAccountFetch(async () => {
+    await runGh([
+      "api", "--method", "POST",
+      `repos/${repo}/issues/${prNumber}/comments`,
+      "--field", `body=${body}`,
+    ])
   })
 }

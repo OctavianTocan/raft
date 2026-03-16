@@ -59,6 +59,8 @@ export interface Comment {
 
 /** An inline code review comment attached to a specific file and line. */
 export interface CodeComment {
+  /** GitHub API comment ID, used for replying to this comment. */
+  id: number
   author: string
   body: string
   path: string
