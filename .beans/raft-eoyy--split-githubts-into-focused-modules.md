@@ -1,0 +1,16 @@
+---
+# raft-eoyy
+title: Split github.ts into focused modules
+status: todo
+type: task
+created_at: 2026-03-16T15:41:39Z
+updated_at: 2026-03-16T15:41:39Z
+parent: raft-tlm1
+---
+
+github.ts is 469 lines mixing auth, search, details, and review APIs. Split into:
+- github-client.ts: runGh, account switching, tryMultiAccountFetch (~100 lines)
+- github-search.ts: fetchOpenPRs, fetchAllAccountPRs, parseSearchResults (~120 lines)
+- github-details.ts: fetchPRDetails, fetchPRPanelData (~80 lines)
+- github-reviews.ts: submitPRReview, replyToReviewComment, postPRComment (~60 lines)
+- github.ts: re-exports everything for backward compat (~10 lines)
