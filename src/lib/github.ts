@@ -1,5 +1,6 @@
 import type { PullRequest, PRDetails, Review, PRPanelData, Comment, CodeComment, FileDiff } from "./types"
 import { STACK_COMMENT_MARKER } from "./types"
+import { safeSpawn, buildCleanEnv } from "./process"
 
 interface RawSearchResult {
   number: number
@@ -38,24 +39,14 @@ export function stripStackPrefix(title: string): string {
 }
 
 async function runGh(args: string[]): Promise<string> {
-  // Strip GITHUB_TOKEN and GH_TOKEN from env so gh CLI uses its own keyring auth.
-  // Bun auto-loads .env files, which may contain project-specific tokens that
-  // override gh's auth and cause 401 errors.
-  const cleanEnv = { ...process.env }
-  delete cleanEnv.GITHUB_TOKEN
-  delete cleanEnv.GH_TOKEN
-  const proc = Bun.spawn(["gh", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: cleanEnv,
+  // Use safeSpawn to prevent fd leaks that caused segfaults after ~72s
+  const { stdout, stderr, exitCode } = await safeSpawn(["gh", ...args], {
+    env: buildCleanEnv(),
   })
-  const stdout = await new Response(proc.stdout).text()
-  const stderr = await new Response(proc.stderr).text()
-  const exitCode = await proc.exited
   if (exitCode !== 0) {
     throw new Error(`gh ${args.join(" ")} failed: ${stderr}`)
   }
-  return stdout.trim()
+  return stdout
 }
 
 /** Get all authenticated gh account usernames. */

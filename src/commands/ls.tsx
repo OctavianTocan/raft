@@ -1,12 +1,12 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
 import { Spinner } from "../components/spinner"
 import { SkeletonList } from "../components/skeleton"
-import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, fetchPRPanelData, submitPRReview, postPRComment, replyToReviewComment } from "../lib/github"
+import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, submitPRReview, postPRComment, replyToReviewComment } from "../lib/github"
 import { shortRepoName } from "../lib/format"
-import { PRCache } from "../lib/cache"
 import { PreviewPanel } from "../components/preview-panel"
+import { usePanel } from "../hooks/usePanel"
 import type { PullRequest, Density, PRDetails, PanelTab, PRPanelData } from "../lib/types"
 import { groupByRepo, groupByStack, groupByRepoAndStack, type GroupMode, type GroupedData } from "../lib/grouping"
 
@@ -44,17 +44,10 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [density, setDensity] = useState<Density>("compact")
   const [detailsMap, setDetailsMap] = useState<Map<string, PRDetails>>(new Map())
   const [groupMode, setGroupMode] = useState<GroupMode>("none")
-  const [panelOpen, setPanelOpen] = useState(false)
-  const [panelTab, setPanelTab] = useState<PanelTab>("body")
-  const [splitRatio, setSplitRatio] = useState(0.6)
-  const [panelFullscreen, setPanelFullscreen] = useState(false)
-  const [panelData, setPanelData] = useState<PRPanelData | null>(null)
-  const [panelLoading, setPanelLoading] = useState(false)
   // Reply mode: composing a reply to a code comment
   const [replyMode, setReplyMode] = useState(false)
   const [replyText, setReplyText] = useState("")
   const [replyCommentId, setReplyCommentId] = useState<number | null>(null)
-  const cacheRef = useRef(new PRCache())
 
   // Detect current repo on mount
   useEffect(() => {
@@ -202,43 +195,10 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
 
   const selectedPR = filteredPRs[selectedIndex] ?? null
 
-  // Panel data fetching
-  useEffect(() => {
-    if (!panelOpen || !selectedPR) return
-
-    const cache = cacheRef.current
-    const cached = cache.getPanelData(selectedPR.url)
-    if (cached) {
-      setPanelData(cached)
-      setPanelLoading(false)
-      return
-    }
-
-    setPanelLoading(true)
-    setPanelData(null)
-    fetchPRPanelData(selectedPR.repo, selectedPR.number)
-      .then((data) => {
-        cache.setPanelData(selectedPR.url, data)
-        setPanelData(data)
-      })
-      .catch(() => setPanelData(null))
-      .finally(() => setPanelLoading(false))
-  }, [panelOpen, selectedPR?.url])
-
-  // Prefetch neighbors
-  useEffect(() => {
-    if (!panelOpen) return
-    const cache = cacheRef.current
-
-    const neighbors = [filteredPRs[selectedIndex - 1], filteredPRs[selectedIndex + 1]].filter(Boolean)
-    for (const pr of neighbors) {
-      if (!cache.hasPanelData(pr.url)) {
-        fetchPRPanelData(pr.repo, pr.number)
-          .then((data) => cache.setPanelData(pr.url, data))
-          .catch(() => {})
-      }
-    }
-  }, [panelOpen, selectedIndex, filteredPRs])
+  // Panel state management (shared hook handles data fetching + caching + prefetching)
+  const panel = usePanel(selectedPR, filteredPRs, selectedIndex)
+  const { panelOpen, panelTab, splitRatio, panelFullscreen, panelData, panelLoading,
+    setPanelOpen, setPanelTab, setSplitRatio, setPanelFullscreen, setPanelData, cacheRef } = panel
 
   // Compute visible window: reserve 7 lines for header/tabs/repo/search/detail/keybinds
   const rowHeight = density === "detailed" ? 2 : 1
