@@ -1,5 +1,19 @@
-import { useEffect, useState } from "react"
+/**
+ * Panel tab for rendering PR file diffs with syntax-highlighted native diffs.
+ *
+ * Uses OpenTUI's native `<diff>` component (via {@link DiffView}) for proper
+ * split/unified diff rendering with Tree-sitter syntax highlighting and
+ * word-level change detection. File headers and AI explanation blocks are
+ * rendered as styled text above each diff.
+ *
+ * Architecture follows Critique (remorses/critique): GitHub API patches are
+ * converted to unified diff format, then passed to the native `<diff>` element.
+ */
+
+import React from "react"
 import type { FileDiff } from "../lib/types"
+import { buildUnifiedDiff, detectFiletype, getViewMode } from "../lib/diff-utils"
+import { DiffView } from "./diff-view"
 
 /**
  * Props for the {@link PanelFiles} component.
@@ -7,22 +21,8 @@ import type { FileDiff } from "../lib/types"
 interface PanelFilesProps {
   /** Array of file diffs to render in the panel. */
   files: FileDiff[]
-  /** Available terminal width in columns, used for sizing separator lines. */
+  /** Available terminal width in columns, used for sizing and view mode selection. */
   width: number
-  /** Number of lines to skip from the top (for vertical scrolling). */
-  scrollOffset: number
-  /** Maximum number of visible lines to render at once. */
-  maxLines: number
-  /** Callback invoked when total content height changes, for scroll bounds. */
-  onContentHeight?: (height: number) => void
-}
-
-/** A single styled line in the diff output. */
-interface StyledLine {
-  /** Foreground color (hex). */
-  fg: string
-  /** Text content for the line. */
-  text: string
 }
 
 /**
@@ -31,7 +31,7 @@ interface StyledLine {
  *
  * @param text  - The content to place at the start of the line.
  * @param width - The target width in columns.
- * @param fill  - The character used to fill remaining space (default `"\u2500"` i.e. `─`).
+ * @param fill  - The character used to fill remaining space (default `"\u2500"` i.e. `\u2500`).
  * @returns The padded string, exactly `width` characters long.
  */
 function padLine(text: string, width: number, fill = "\u2500"): string {
@@ -40,176 +40,133 @@ function padLine(text: string, width: number, fill = "\u2500"): string {
 }
 
 /**
- * Colorizes a single diff line based on its leading character.
+ * Renders a box-drawing file header with filename, change stats, and status.
  *
- * - Lines starting with `+` are additions (green).
- * - Lines starting with `-` are deletions (red).
- * - Lines starting with `@@` are hunk headers (blue) and have their
- *   `@@` markers stripped for a cleaner display.
- * - All other lines are context (muted gray, slightly lighter than
- *   the "no diff" placeholder color to distinguish them visually).
- *
- * @param line - Raw diff line text.
- * @returns A {@link StyledLine} with the appropriate color and cleaned text.
- */
-function renderDiffLine(line: string): StyledLine {
-  if (line.startsWith("+")) {
-    return { fg: "#9ece6a", text: line }
-  } else if (line.startsWith("-")) {
-    return { fg: "#f7768e", text: line }
-  } else if (line.startsWith("@@")) {
-    // Strip @@ markers, show just the range info cleanly
-    const match = line.match(/^@@\s+(.+?)\s+@@(.*)$/)
-    if (match) {
-      const rangeInfo = match[1].trim()
-      const sectionLabel = match[2].trim()
-      const display = sectionLabel ? `${rangeInfo}  ${sectionLabel}` : rangeInfo
-      return { fg: "#7aa2f7", text: `  ${display}` }
-    }
-    return { fg: "#7aa2f7", text: line }
-  } else {
-    // Context lines: use a slightly lighter shade than "no diff" (#6b7089)
-    return { fg: "#787c99", text: line }
-  }
-}
-
-/**
- * Builds a box-drawing file header block for a single file diff.
- *
- * Produces three styled lines:
  * ```
- * ┌─ filename ──────────────────────────────
- * │ +N -N · status
- * └─────────────────────────────────────────
+ * \u250C\u2500 filename \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+ * \u2502 +N -N \u00B7 status
+ * \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
  * ```
- *
- * @param name   - Display name for the file (may include rename arrow).
- * @param file   - The file diff data, used for additions/deletions/status.
- * @param boxWidth - Width of the box in columns.
- * @returns An array of three {@link StyledLine} entries.
  */
-function buildFileHeader(name: string, file: FileDiff, boxWidth: number): StyledLine[] {
+function FileHeader({ name, file, boxWidth }: { name: string; file: FileDiff; boxWidth: number }) {
   const topLine = padLine(`\u250C\u2500 ${name} `, boxWidth, "\u2500")
   const midLine = `\u2502 +${file.additions} -${file.deletions} \u00B7 ${file.status}`
   const botLine = padLine("\u2514", boxWidth, "\u2500")
-  return [
-    { fg: "#7aa2f7", text: topLine },
-    { fg: "#9aa5ce", text: midLine },
-    { fg: "#7aa2f7", text: botLine },
-  ]
+
+  return (
+    <box flexDirection="column">
+      <box height={1}><text fg="#7aa2f7">{topLine}</text></box>
+      <box height={1}><text fg="#9aa5ce">{midLine}</text></box>
+      <box height={1}><text fg="#7aa2f7">{botLine}</text></box>
+    </box>
+  )
 }
 
 /**
- * Builds a box-drawing explanation block for an AI-generated summary.
+ * Renders a box-drawing block for an AI-generated explanation.
  *
- * Produces three styled lines:
  * ```
- * ┌ AI Summary ─────────────────────────────
- * │ <explanation text>
- * └─────────────────────────────────────────
+ * \u250C AI Summary \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+ * \u2502 <explanation text>
+ * \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
  * ```
- *
- * @param explanation - The explanation text to display.
- * @param boxWidth    - Width of the box in columns.
- * @returns An array of three {@link StyledLine} entries.
  */
-function buildExplanationBlock(explanation: string, boxWidth: number): StyledLine[] {
+function ExplanationBlock({ explanation, boxWidth }: { explanation: string; boxWidth: number }) {
   const topLine = padLine("\u250C AI Summary ", boxWidth, "\u2500")
   const botLine = padLine("\u2514", boxWidth, "\u2500")
-  return [
-    { fg: "#bb9af7", text: topLine },
-    { fg: "#bb9af7", text: `\u2502 ${explanation}` },
-    { fg: "#bb9af7", text: botLine },
-  ]
+
+  return (
+    <box flexDirection="column" marginY={1}>
+      <box height={1}><text fg="#bb9af7">{topLine}</text></box>
+      <box height={1}><text fg="#bb9af7">{`\u2502 ${explanation}`}</text></box>
+      <box height={1}><text fg="#bb9af7">{botLine}</text></box>
+    </box>
+  )
 }
 
 /**
- * Renders a scrollable list of file diffs with box-drawing file headers,
- * AI explanation blocks, colorized diff lines, and visual separators.
+ * Renders all file diffs for a PR with native syntax-highlighted diffs.
  *
- * The component computes all styled lines eagerly in a `useEffect`, stores
- * them in state, and slices the visible window based on `scrollOffset` and
- * `maxLines`.
+ * Each file gets a box-drawing header, optional AI explanation block,
+ * and a native `<diff>` component for the actual diff content. The component
+ * is designed to be wrapped in a `<scrollbox>` by the parent for scrolling.
  *
  * @param props - See {@link PanelFilesProps}.
  */
-export function PanelFiles({ files, width, scrollOffset, maxLines, onContentHeight }: PanelFilesProps) {
-  const [lines, setLines] = useState<StyledLine[]>([])
+export function PanelFiles({ files, width }: PanelFilesProps) {
+  const boxWidth = Math.max(width - 4, 40)
 
-  useEffect(() => {
-    const output: StyledLine[] = []
-    // Reserve some space for padding
-    const boxWidth = Math.max(width - 4, 40)
+  if (files.length === 0) {
+    return (
+      <box flexDirection="column" paddingX={1}>
+        <box height={1}><text fg="#6b7089">No files changed</text></box>
+      </box>
+    )
+  }
 
-    if (files.length === 0) {
-      output.push({ fg: "#6b7089", text: "No files changed" })
-    } else {
-      // Summary
-      const totalAdd = files.reduce((sum, f) => sum + f.additions, 0)
-      const totalDel = files.reduce((sum, f) => sum + f.deletions, 0)
-      const explainedCount = files.filter(f => f.explanation).length
-
-      output.push({ fg: "#9aa5ce", text: `${files.length} files changed, +${totalAdd} -${totalDel}` })
-
-      if (explainedCount > 0) {
-        output.push({ fg: "#6b7089", text: `${explainedCount}/${files.length} files explained` })
-      } else {
-        output.push({ fg: "#6b7089", text: "Press 'e' to generate AI explanations" })
-      }
-
-      output.push({ fg: "#6b7089", text: "" })
-
-      // Show diff for each file
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const name = file.status === "renamed" && file.previousFilename
-          ? `${file.previousFilename} \u2192 ${file.filename}`
-          : file.filename
-
-        // Box-drawing file header
-        output.push(...buildFileHeader(name, file, boxWidth))
-
-        // Show explanation if available, in a box
-        if (file.explanation) {
-          output.push({ fg: "#6b7089", text: "" })
-          output.push(...buildExplanationBlock(file.explanation, boxWidth))
-          output.push({ fg: "#6b7089", text: "" })
-        }
-
-        if (file.patch) {
-          const patchLines = file.patch.split("\n")
-          for (const line of patchLines) {
-            // Skip the diff --git header lines from the patch since we
-            // already render a styled file header above
-            if (line.startsWith("diff --git ")) continue
-            output.push(renderDiffLine(line))
-          }
-        } else {
-          output.push({ fg: "#6b7089", text: "Binary file or no diff available" })
-        }
-
-        // Visual separator between files
-        if (i < files.length - 1) {
-          output.push({ fg: "#6b7089", text: "" })
-          output.push({ fg: "#3b3d57", text: "\u2500".repeat(boxWidth) })
-          output.push({ fg: "#6b7089", text: "" })
-        }
-      }
-    }
-
-    setLines(output)
-    onContentHeight?.(output.length)
-  }, [files, width, onContentHeight])
-
-  const visibleLines = lines.slice(scrollOffset, scrollOffset + maxLines)
+  // Summary stats
+  const totalAdd = files.reduce((sum, f) => sum + f.additions, 0)
+  const totalDel = files.reduce((sum, f) => sum + f.deletions, 0)
+  const explainedCount = files.filter(f => f.explanation).length
 
   return (
     <box flexDirection="column" paddingX={1}>
-      {visibleLines.map((line, i) => (
-        <box key={scrollOffset + i} height={1}>
-          <text fg={line.fg}>{line.text}</text>
-        </box>
-      ))}
+      {/* Summary header */}
+      <box height={1}>
+        <text fg="#9aa5ce">
+          {files.length} files changed, +{totalAdd} -{totalDel}
+        </text>
+      </box>
+      <box height={1}>
+        <text fg="#6b7089">
+          {explainedCount > 0
+            ? `${explainedCount}/${files.length} files explained`
+            : "Press 'e' to generate AI explanations"}
+        </text>
+      </box>
+      <box height={1} />
+
+      {/* File diffs */}
+      {files.map((file, i) => {
+        const name = file.status === "renamed" && file.previousFilename
+          ? `${file.previousFilename} \u2192 ${file.filename}`
+          : file.filename
+        const filetype = detectFiletype(file.filename)
+        const unifiedDiff = buildUnifiedDiff(file)
+        const viewMode = getViewMode(file.additions, file.deletions, width)
+
+        return (
+          <box key={file.filename} flexDirection="column" marginBottom={i < files.length - 1 ? 1 : 0}>
+            {/* File header */}
+            <FileHeader name={name} file={file} boxWidth={boxWidth} />
+
+            {/* AI explanation if available */}
+            {file.explanation && (
+              <ExplanationBlock explanation={file.explanation} boxWidth={boxWidth} />
+            )}
+
+            {/* Native diff rendering */}
+            {unifiedDiff ? (
+              <DiffView
+                diff={unifiedDiff}
+                view={viewMode}
+                filetype={filetype}
+              />
+            ) : (
+              <box height={1}>
+                <text fg="#6b7089">Binary file or no diff available</text>
+              </box>
+            )}
+
+            {/* Separator between files */}
+            {i < files.length - 1 && (
+              <box height={1} marginTop={1}>
+                <text fg="#3b3d57">{"\u2500".repeat(boxWidth)}</text>
+              </box>
+            )}
+          </box>
+        )
+      })}
     </box>
   )
 }

@@ -137,91 +137,65 @@ export function parseMarkdownLines(input: string): MdLine[] {
 
 /** Props for the MarkdownView component. */
 interface MarkdownViewProps {
+  /** Raw markdown content to render. */
   content: string
+  /** Available width in columns. */
   width: number
-  scrollOffset: number
-  maxLines: number
-  onContentHeight?: (height: number) => void
 }
 
-/** Renders a markdown string as a scrollable terminal UI with block and inline formatting. */
-export function MarkdownView({ content, width, scrollOffset, maxLines, onContentHeight }: MarkdownViewProps) {
+/**
+ * Renders a markdown string as a terminal UI with block and inline formatting.
+ *
+ * Supports headers, bullet/numbered lists, fenced code blocks, and inline
+ * bold/code formatting. Designed to be wrapped in a `<scrollbox>` by the
+ * parent for scrolling.
+ *
+ * @param props - See {@link MarkdownViewProps}.
+ */
+export function MarkdownView({ content, width }: MarkdownViewProps) {
   const lines = parseMarkdownLines(content)
-
-  // Flatten to renderable lines with styles
-  const rendered: { key: string; element: React.ReactNode }[] = []
-  let lineIdx = 0
-
-  for (const line of lines) {
-    const key = `md-${lineIdx++}`
-    switch (line.type) {
-      case "header":
-        rendered.push({
-          key,
-          element: (
-            <box height={1} paddingX={1}>
-              <text><strong>{renderInlineText(line.text)}</strong></text>
-            </box>
-          ),
-        })
-        break
-      case "list":
-        rendered.push({
-          key,
-          element: (
-            <box height={1} paddingX={1}>
-              <text>
-                <span fg="#6b7089">  - </span>
-                {renderInlineText(line.text)}
-              </text>
-            </box>
-          ),
-        })
-        break
-      case "code":
-        for (const codeLine of line.text.split("\n")) {
-          const codeKey = `md-${lineIdx++}`
-          rendered.push({
-            key: codeKey,
-            element: (
-              <box height={1} paddingX={2} backgroundColor="#1a1b26">
-                <text fg="#9aa5ce">{codeLine}</text>
-              </box>
-            ),
-          })
-        }
-        break
-      case "blank":
-        rendered.push({
-          key,
-          element: <box height={1} />,
-        })
-        break
-      case "text":
-        rendered.push({
-          key,
-          element: (
-            <box height={1} paddingX={1}>
-              <text>{renderInlineText(line.text)}</text>
-            </box>
-          ),
-        })
-        break
-    }
-  }
-
-  const visible = rendered.slice(scrollOffset, scrollOffset + maxLines)
-
-  // Report actual content height
-  if (onContentHeight) {
-    onContentHeight(rendered.length)
-  }
 
   return (
     <box flexDirection="column" width={width}>
-      {visible.map(({ key, element }) => (
-        <box key={key}>{element}</box>
-      ))}
+      {lines.map((line, lineIdx) => {
+        const key = `md-${lineIdx}`
+        switch (line.type) {
+          case "header":
+            return (
+              <box key={key} height={1} paddingX={1}>
+                <text><strong>{renderInlineText(line.text)}</strong></text>
+              </box>
+            )
+          case "list":
+            return (
+              <box key={key} height={1} paddingX={1}>
+                <text>
+                  <span fg="#6b7089">  - </span>
+                  {renderInlineText(line.text)}
+                </text>
+              </box>
+            )
+          case "code":
+            // Code blocks expand to multiple lines
+            return (
+              <box key={key} flexDirection="column">
+                {line.text.split("\n").map((codeLine, ci) => (
+                  <box key={`${key}-c${ci}`} height={1} paddingX={2} backgroundColor="#1a1b26">
+                    <text fg="#9aa5ce">{codeLine}</text>
+                  </box>
+                ))}
+              </box>
+            )
+          case "blank":
+            return <box key={key} height={1} />
+          case "text":
+            return (
+              <box key={key} height={1} paddingX={1}>
+                <text>{renderInlineText(line.text)}</text>
+              </box>
+            )
+        }
+      })}
     </box>
   )
 }

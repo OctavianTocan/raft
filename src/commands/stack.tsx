@@ -74,11 +74,10 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [panelOpen, setPanelOpen] = useState(false)
   const [panelTab, setPanelTab] = useState<PanelTab>("body")
-  const [panelScroll, setPanelScroll] = useState(0)
+  const [panelFullscreen, setPanelFullscreen] = useState(false)
   const [splitRatio, setSplitRatio] = useState(0.6)
   const [panelData, setPanelData] = useState<PRPanelData | null>(null)
   const [panelLoading, setPanelLoading] = useState(false)
-  const [panelContentHeight, setPanelContentHeight] = useState(0)
   const cacheRef = useRef(new PRCache())
 
   // Flatten all PRs for navigation
@@ -129,32 +128,20 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
 
   useKeyboard((key) => {
     if (panelOpen) {
-      // Panel mode: j/k for scroll, up/down for PR nav, 1/2/3 for tabs
-      const maxScroll = Math.max(0, panelContentHeight - (termHeight - 6))
-      const scrollSpeed = key.shift ? 5 : 1
-
-      if (key.name === "j") {
-        setPanelScroll((s) => Math.min(maxScroll, s + scrollSpeed))
-      } else if (key.name === "k") {
-        setPanelScroll((s) => Math.max(0, s - scrollSpeed))
-      } else if (key.name === "down") {
+      // Panel mode: scrolling handled by scrollbox natively,
+      // only PR navigation and panel controls managed here
+      if (key.name === "down") {
         setSelectedIndex((i) => Math.min(allPRs.length - 1, i + 1))
-        setPanelScroll(0)
       } else if (key.name === "up") {
         setSelectedIndex((i) => Math.max(0, i - 1))
-        setPanelScroll(0)
       } else if (key.name === "1") {
         setPanelTab("body")
-        setPanelScroll(0)
       } else if (key.name === "2") {
         setPanelTab("comments")
-        setPanelScroll(0)
       } else if (key.name === "3") {
         setPanelTab("code")
-        setPanelScroll(0)
       } else if (key.name === "4") {
         setPanelTab("files")
-        setPanelScroll(0)
       } else if (key.name === "tab") {
         setPanelTab((t) => {
           if (t === "body") return "comments"
@@ -162,13 +149,18 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
           if (t === "code") return "files"
           return "body"
         })
-        setPanelScroll(0)
       } else if (key.name === "+" || key.name === "=" || key.sequence === "+") {
         setSplitRatio((r) => Math.min(0.8, r + 0.1))
       } else if (key.name === "-" || key.name === "_" || key.sequence === "-") {
         setSplitRatio((r) => Math.max(0.3, r - 0.1))
+      } else if (key.name === "f") {
+        setPanelFullscreen((f) => !f)
       } else if (key.name === "p" || key.name === "escape") {
-        setPanelOpen(false)
+        if (panelFullscreen) {
+          setPanelFullscreen(false)
+        } else {
+          setPanelOpen(false)
+        }
       } else if (key.name === "enter" || key.name === "return") {
         if (selectedPR) {
           Bun.spawn(["open", selectedPR.url], { stdout: "ignore", stderr: "ignore" })
@@ -190,7 +182,6 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
       setSelectedIndex((i) => Math.max(0, i - 1))
     } else if (key.name === "p") {
       setPanelOpen(true)
-      setPanelScroll(0)
       setPanelTab("body")
     } else if (key.name === "enter" || key.name === "return") {
       if (selectedPR) {
@@ -288,20 +279,21 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
     <box flexDirection="column" width="100%" height="100%">
       {panelOpen && selectedPR ? (
         <box flexDirection="row" flexGrow={1}>
-          <box flexDirection="column" width={Math.floor(termWidth * (1 - splitRatio))}>
-            {stacks.map((stack, i) => (
-              <StackView key={i} stack={stack} syncing={syncing} selectedPR={selectedPR} />
-            ))}
-          </box>
+          {/* Stack list (hidden in fullscreen) */}
+          {!panelFullscreen && (
+            <box flexDirection="column" width={Math.floor(termWidth * (1 - splitRatio))}>
+              {stacks.map((stack, i) => (
+                <StackView key={i} stack={stack} syncing={syncing} selectedPR={selectedPR} />
+              ))}
+            </box>
+          )}
           <PreviewPanel
             pr={selectedPR}
             panelData={panelData}
             loading={panelLoading}
             tab={panelTab}
-            scrollOffset={panelScroll}
-            width={Math.floor(termWidth * splitRatio)}
+            width={panelFullscreen ? termWidth : Math.floor(termWidth * splitRatio)}
             height={termHeight - 2}
-            onContentHeight={setPanelContentHeight}
           />
         </box>
       ) : (

@@ -1,18 +1,30 @@
+/**
+ * Panel tab for rendering inline code review comments on a PR.
+ *
+ * Each comment shows the author, file path, line number, a snippet of
+ * the diff hunk for context, and the comment body. Designed to be wrapped
+ * in a `<scrollbox>` by the parent for scrolling.
+ */
+
 import React from "react"
 import type { CodeComment } from "../lib/types"
 import { formatRelativeAge, truncate } from "../lib/format"
 
+/** Props for the {@link PanelCode} component. */
 interface PanelCodeProps {
+  /** Array of inline code review comments to render. */
   codeComments: CodeComment[]
+  /** Available width in columns. */
   width: number
-  scrollOffset: number
-  maxLines: number
-  onContentHeight?: (height: number) => void
 }
 
-export function PanelCode({ codeComments, width, scrollOffset, maxLines, onContentHeight }: PanelCodeProps) {
+/**
+ * Renders all inline code review comments as styled cards with file context.
+ *
+ * @param props - See {@link PanelCodeProps}.
+ */
+export function PanelCode({ codeComments, width }: PanelCodeProps) {
   if (codeComments.length === 0) {
-    if (onContentHeight) onContentHeight(1)
     return (
       <box paddingX={1}>
         <text fg="#6b7089">No code comments.</text>
@@ -20,112 +32,65 @@ export function PanelCode({ codeComments, width, scrollOffset, maxLines, onConte
     )
   }
 
-  const lines: { key: string; element: React.ReactNode }[] = []
-  let idx = 0
-
-  for (const comment of codeComments) {
-    const age = formatRelativeAge(comment.createdAt)
-
-    // Header
-    lines.push({
-      key: `cc-${idx}-header`,
-      element: (
-        <box height={1} paddingX={1}>
-          <text>
-            <span fg="#6b7089">{"\u250C"} </span>
-            <span fg="#bb9af7">@{comment.author}</span>
-            <span fg="#6b7089"> {"\u00B7"} {age}</span>
-          </text>
-        </box>
-      ),
-    })
-
-    // File path + line
-    lines.push({
-      key: `cc-${idx}-path`,
-      element: (
-        <box height={1} paddingX={1}>
-          <text>
-            <span fg="#6b7089">{"\u2502"} </span>
-            <span fg="#7aa2f7">{comment.path}</span>
-            <span fg="#6b7089">:{comment.line}</span>
-          </text>
-        </box>
-      ),
-    })
-
-    // Diff hunk (last line only, as context)
-    if (comment.diffHunk) {
-      const hunkLines = comment.diffHunk.split("\n")
-      const lastLine = hunkLines[hunkLines.length - 1] || ""
-      lines.push({
-        key: `cc-${idx}-hunk`,
-        element: (
-          <box height={1} paddingX={1}>
-            <text>
-              <span fg="#6b7089">{"\u2502"} {">"} </span>
-              <span fg="#9aa5ce">{truncate(lastLine, width - 8)}</span>
-            </text>
-          </box>
-        ),
-      })
-    }
-
-    // Blank separator before comment body
-    lines.push({
-      key: `cc-${idx}-sep`,
-      element: (
-        <box height={1} paddingX={1}>
-          <text fg="#6b7089">{"\u2502"}</text>
-        </box>
-      ),
-    })
-
-    // Comment body
-    const bodyLines = comment.body.split("\n")
-    for (const bodyLine of bodyLines) {
-      lines.push({
-        key: `cc-${idx}-${lines.length}`,
-        element: (
-          <box height={1} paddingX={1}>
-            <text>
-              <span fg="#6b7089">{"\u2502"} </span>
-              <span fg="#c0caf5">{bodyLine}</span>
-            </text>
-          </box>
-        ),
-      })
-    }
-
-    // Footer
-    lines.push({
-      key: `cc-${idx}-footer`,
-      element: (
-        <box height={1} paddingX={1}>
-          <text fg="#6b7089">{"\u2514"}</text>
-        </box>
-      ),
-    })
-
-    lines.push({
-      key: `cc-${idx}-spacer`,
-      element: <box height={1} />,
-    })
-
-    idx++
-  }
-
-  const visible = lines.slice(scrollOffset, scrollOffset + maxLines)
-
-  if (onContentHeight) {
-    onContentHeight(lines.length)
-  }
-
   return (
     <box flexDirection="column" width={width}>
-      {visible.map(({ key, element }) => (
-        <box key={key}>{element}</box>
-      ))}
+      {codeComments.map((comment, idx) => {
+        const age = formatRelativeAge(comment.createdAt)
+
+        return (
+          <box key={`cc-${idx}`} flexDirection="column" marginBottom={1}>
+            {/* Header: author and timestamp */}
+            <box height={1} paddingX={1}>
+              <text>
+                <span fg="#6b7089">{"\u250C"} </span>
+                <span fg="#bb9af7">@{comment.author}</span>
+                <span fg="#6b7089"> {"\u00B7"} {age}</span>
+              </text>
+            </box>
+
+            {/* File path and line number */}
+            <box height={1} paddingX={1}>
+              <text>
+                <span fg="#6b7089">{"\u2502"} </span>
+                <span fg="#7aa2f7">{comment.path}</span>
+                <span fg="#6b7089">:{comment.line}</span>
+              </text>
+            </box>
+
+            {/* Diff hunk context (last line only) */}
+            {comment.diffHunk && (
+              <box height={1} paddingX={1}>
+                <text>
+                  <span fg="#6b7089">{"\u2502"} {">"} </span>
+                  <span fg="#9aa5ce">
+                    {truncate(comment.diffHunk.split("\n").pop() || "", width - 8)}
+                  </span>
+                </text>
+              </box>
+            )}
+
+            {/* Blank separator before body */}
+            <box height={1} paddingX={1}>
+              <text fg="#6b7089">{"\u2502"}</text>
+            </box>
+
+            {/* Comment body */}
+            {comment.body.split("\n").map((bodyLine, li) => (
+              <box key={`cc-${idx}-${li}`} height={1} paddingX={1}>
+                <text>
+                  <span fg="#6b7089">{"\u2502"} </span>
+                  <span fg="#c0caf5">{bodyLine}</span>
+                </text>
+              </box>
+            ))}
+
+            {/* Footer */}
+            <box height={1} paddingX={1}>
+              <text fg="#6b7089">{"\u2514"}</text>
+            </box>
+          </box>
+        )
+      })}
     </box>
   )
 }

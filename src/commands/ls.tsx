@@ -46,11 +46,10 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [groupMode, setGroupMode] = useState<GroupMode>("none")
   const [panelOpen, setPanelOpen] = useState(false)
   const [panelTab, setPanelTab] = useState<PanelTab>("body")
-  const [panelScroll, setPanelScroll] = useState(0)
   const [splitRatio, setSplitRatio] = useState(0.6)
+  const [panelFullscreen, setPanelFullscreen] = useState(false)
   const [panelData, setPanelData] = useState<PRPanelData | null>(null)
   const [panelLoading, setPanelLoading] = useState(false)
-  const [panelContentHeight, setPanelContentHeight] = useState(0)
   const cacheRef = useRef(new PRCache())
 
   // Detect current repo on mount
@@ -278,26 +277,20 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     }
 
     if (panelOpen) {
-      // Panel open mode
-      const scrollIncrement = key.shift ? 5 : 1
-      if (key.name === "j") {
-        setPanelScroll((s) => Math.min(Math.max(0, panelContentHeight - (termHeight - 9)), s + scrollIncrement))
-      } else if (key.name === "k") {
-        setPanelScroll((s) => Math.max(0, s - scrollIncrement))
-      } else if (key.name === "down") {
+      // Panel open mode: scrolling is handled by the scrollbox natively,
+      // so only PR navigation and panel controls are managed here
+      if (key.name === "down") {
         setSelectedIndex((i) => Math.min(filteredPRs.length - 1, i + 1))
-        setPanelScroll(0)
       } else if (key.name === "up") {
         setSelectedIndex((i) => Math.max(0, i - 1))
-        setPanelScroll(0)
       } else if (key.name === "1") {
-        setPanelTab("body"); setPanelScroll(0)
+        setPanelTab("body")
       } else if (key.name === "2") {
-        setPanelTab("comments"); setPanelScroll(0)
+        setPanelTab("comments")
       } else if (key.name === "3") {
-        setPanelTab("code"); setPanelScroll(0)
+        setPanelTab("code")
       } else if (key.name === "4") {
-        setPanelTab("files"); setPanelScroll(0)
+        setPanelTab("files")
       } else if (key.name === "tab") {
         setPanelTab((t) => {
           if (t === "body") return "comments"
@@ -305,13 +298,19 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           if (t === "code") return "files"
           return "body"
         })
-        setPanelScroll(0)
       } else if (key.name === "+" || key.name === "=" || key.sequence === "+") {
         setSplitRatio((r) => Math.min(0.8, r + 0.1))
       } else if (key.name === "-" || key.name === "_" || key.sequence === "-") {
         setSplitRatio((r) => Math.max(0.3, r - 0.1))
+      } else if (key.name === "f") {
+        setPanelFullscreen((f) => !f)
       } else if (key.name === "p" || key.name === "escape") {
-        setPanelOpen(false)
+        // Exit fullscreen first, then close panel on second press
+        if (panelFullscreen) {
+          setPanelFullscreen(false)
+        } else {
+          setPanelOpen(false)
+        }
       } else if (key.name === "enter" || key.name === "return") {
         if (selectedPR) {
           Bun.spawn(["open", selectedPR.url], { stdout: "ignore", stderr: "ignore" })
@@ -441,7 +440,6 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       setSelectedIndex(0)
     } else if (key.name === "p") {
       setPanelOpen(true)
-      setPanelScroll(0)
       setPanelTab("body")
     }
   })
@@ -538,30 +536,30 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       {/* Main content area */}
       {panelOpen ? (
         <box flexDirection="row" flexGrow={1} overflow="hidden">
-          {/* Compressed PR list */}
-          <box flexDirection="column" width={Math.floor(termWidth * (1 - splitRatio))}>
-            <box flexDirection="column" flexGrow={1} overflow="hidden">
-              <PRTable
-                prs={visiblePRs}
-                selectedIndex={visibleSelectedIndex}
-                density="compressed"
-                onSelect={handleSelect}
-                groupedData={groupedData}
-                groupMode={groupMode}
-              />
+          {/* Compressed PR list (hidden in fullscreen) */}
+          {!panelFullscreen && (
+            <box flexDirection="column" width={Math.floor(termWidth * (1 - splitRatio))}>
+              <box flexDirection="column" flexGrow={1} overflow="hidden">
+                <PRTable
+                  prs={visiblePRs}
+                  selectedIndex={visibleSelectedIndex}
+                  density="compressed"
+                  onSelect={handleSelect}
+                  groupedData={groupedData}
+                  groupMode={groupMode}
+                />
+              </box>
             </box>
-          </box>
-          {/* Preview panel */}
+          )}
+          {/* Preview panel: full width in fullscreen, split ratio otherwise */}
           {selectedPR && (
             <PreviewPanel
               pr={selectedPR}
               panelData={panelData}
               loading={panelLoading}
               tab={panelTab}
-              scrollOffset={panelScroll}
-              width={Math.floor(termWidth * splitRatio)}
+              width={panelFullscreen ? termWidth : Math.floor(termWidth * splitRatio)}
               height={termHeight - 6}
-              onContentHeight={setPanelContentHeight}
             />
           )}
         </box>
@@ -614,7 +612,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
             <text fg="#9ece6a">{flash}</text>
           ) : panelOpen ? (
             <text fg="#6b7089">
-              j/k: scroll  1-4: tab  e: explain  +/-: resize  p: close  Enter: open  c: copy  q: quit
+              1-4: tab  e: explain  f: fullscreen  +/-: resize  p: close  Enter: open  c: copy  q: quit
             </text>
           ) : (
             <text fg="#6b7089">
