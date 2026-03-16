@@ -27,6 +27,7 @@ describe("PRCache", () => {
       body: "# Hello",
       comments: [],
       codeComments: [],
+      files: [],
     }
     cache.setPanelData("https://github.com/org/repo/pull/1", panelData)
     expect(cache.getPanelData("https://github.com/org/repo/pull/1")).toEqual(panelData)

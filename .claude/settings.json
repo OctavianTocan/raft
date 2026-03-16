@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd '/Volumes/Crucial X10/Projects/pr-cli' && bunx tsc --noEmit 2>&1 && bun test 2>&1 | tail -8"
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/stop-typecheck-test.sh"
           }
         ]
       }
