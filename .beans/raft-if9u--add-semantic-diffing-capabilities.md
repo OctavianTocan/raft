@@ -1,10 +1,11 @@
 ---
 # raft-if9u
 title: Add semantic diffing capabilities
-status: todo
+status: completed
 type: feature
+priority: normal
 created_at: 2026-03-16T12:27:20Z
-updated_at: 2026-03-16T12:27:20Z
+updated_at: 2026-03-16T15:32:43Z
 parent: raft-kwlp
 ---
 

@@ -1,10 +1,11 @@
 ---
 # raft-kayt
 title: Improve AI diff explanations
-status: todo
+status: completed
 type: feature
+priority: normal
 created_at: 2026-03-16T12:27:12Z
-updated_at: 2026-03-16T12:27:12Z
+updated_at: 2026-03-16T15:32:43Z
 parent: raft-kwlp
 ---
 

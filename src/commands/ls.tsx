@@ -317,27 +317,26 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           showFlash("Opening " + selectedPR.url)
         }
       } else if (key.name === "e" && panelTab === "files" && panelData && selectedPR) {
-        // Generate AI explanations for file diffs
+        // Generate AI explanations with progressive per-file updates
         showFlash("Generating explanations...")
-        import("../lib/explain-diff").then(async ({ explainFileDiff }) => {
-          const files = panelData.files
-          const updatedFiles = [...files]
+        const prUrl = selectedPR.url
+        import("../lib/explain-diff").then(async ({ explainAllDiffs }) => {
+          const files = [...panelData.files]
 
-          for (let i = 0; i < updatedFiles.length; i++) {
-            if (!updatedFiles[i].explanation && updatedFiles[i].patch) {
-              const explanation = await explainFileDiff(updatedFiles[i])
-              updatedFiles[i] = { ...updatedFiles[i], explanation }
-            }
-          }
+          await explainAllDiffs(files, (filename, explanation, completed, total) => {
+            // Update the specific file's explanation progressively
+            const idx = files.findIndex(f => f.filename === filename)
+            if (idx >= 0) files[idx] = { ...files[idx], explanation }
 
-          // Update panel data with explanations
-          setPanelData({ ...panelData, files: updatedFiles })
-          // Update cache
-          cacheRef.current.setPanelData(selectedPR.url, { ...panelData, files: updatedFiles })
-          showFlash(`Generated ${updatedFiles.filter(f => f.explanation).length} explanations`)
-        }).catch((err) => {
+            const updated = { ...panelData, files: [...files] }
+            setPanelData(updated)
+            cacheRef.current.setPanelData(prUrl, updated)
+            showFlash(`Explaining files... ${completed}/${total}`)
+          })
+
+          showFlash(`Explained ${files.filter(f => f.explanation).length} files`)
+        }).catch(() => {
           showFlash("Failed to generate explanations")
-          console.error(err)
         })
       } else if (key.name === "c" && selectedPR) {
         renderer.copyToClipboardOSC52(selectedPR.url)
