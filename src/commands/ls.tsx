@@ -484,6 +484,24 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     } else if (key.name === "p") {
       setPanelOpen(true)
       setPanelTab("body")
+    } else if (key.name === "m" && selectedPR && selectedLifecycle?.state === "MERGE_NOW") {
+      // Lifecycle action: merge an approved PR
+      showFlash("Merging PR...")
+      import("../lib/git-utils").then(({ runGhMerge }) => {
+        runGhMerge(selectedPR.repo, selectedPR.number)
+          .then(() => showFlash(`Merged #${selectedPR.number}!`))
+          .catch((e) => showFlash(`Merge failed: ${e instanceof Error ? e.message : "unknown"}`))
+      })
+    } else if (key.sequence === "F" && selectedPR && selectedLifecycle?.state === "FIX_REVIEW") {
+      // Lifecycle action: open fix mode for review comments
+      // For now, open panel to code tab to show the threads
+      setPanelOpen(true)
+      setPanelTab("code")
+      showFlash("Showing review threads. (Full fix mode coming soon)")
+    } else if (key.sequence === "P" && selectedPR && selectedLifecycle?.state === "PING_REVIEWERS") {
+      // Lifecycle action: copy PR URL for pinging reviewers
+      renderer.copyToClipboardOSC52(selectedPR.url)
+      showFlash(`Copied URL for #${selectedPR.number}. Ping your reviewers!`)
     }
   })
 
