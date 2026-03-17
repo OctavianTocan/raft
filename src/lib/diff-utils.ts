@@ -170,8 +170,8 @@ export function collapseDiffRegions(
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
 
-    // Hunk headers and change lines break context runs
-    if (line.startsWith("@@") || line.startsWith("+") || line.startsWith("-")) {
+    // Hunk headers, change lines, and "\ No newline" markers break context runs
+    if (line.startsWith("@@") || line.startsWith("+") || line.startsWith("-") || line.startsWith("\\")) {
       // Flush any accumulated context
       if (contextRun.length > contextLines * 2 + 1) {
         // Keep first N context lines, collapse middle, keep last N
@@ -194,13 +194,14 @@ export function collapseDiffRegions(
     }
   }
 
-  // Flush trailing context
-  if (contextRun.length > contextLines + 1) {
+  // Flush trailing context - symmetric with main loop
+  if (contextRun.length > contextLines * 2 + 1) {
     const kept = contextLines
     for (let j = 0; j < kept; j++) result.push(contextRun[j])
-    const hidden = contextRun.length - kept
+    const hidden = contextRun.length - kept * 2
     hiddenRegions.push({ startLine: contextStartLine + kept, count: hidden })
     result.push(`${COLLAPSE_MARKER} ${hidden} lines hidden`)
+    for (let j = contextRun.length - kept; j < contextRun.length; j++) result.push(contextRun[j])
   } else {
     result.push(...contextRun)
   }

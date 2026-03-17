@@ -50,7 +50,7 @@ export interface PRDetails {
   /** Count of unresolved review threads when available. */
   unresolvedThreadCount?: number
   /** Current CI status for the PR head when available. */
-  ciStatus?: "ready" | "pending" | "failing" | null
+  ciStatus?: "ready" | "pending" | "failing" | "unknown" | null
   /** Whether the PR currently has merge conflicts. */
   hasConflicts?: boolean
 }
@@ -108,10 +108,21 @@ export type Density = "compact" | "normal" | "detailed" | "compressed"
 /** Active tab in the preview panel. */
 export type PanelTab = "body" | "comments" | "code" | "files"
 
+/** All possible lifecycle states for a PR. */
+export type PRLifecycleState =
+  | "MERGE_NOW"
+  | "FIX_REVIEW"
+  | "PING_REVIEWERS"
+  | "FIX_CI"
+  | "RESOLVE_CONFLICTS"
+  | "AI_REVIEW"
+  | "WAITING"
+  | "DRAFT"
+
 /** Lifecycle state info attached to a PR for attention-based sorting. */
 export interface PRLifecycleInfo {
-  /** Current lifecycle state label. */
-  state: string
+  /** Current lifecycle state. */
+  state: PRLifecycleState
   /** Urgency score for sorting (0-100, higher = more urgent). */
   urgency: number
   /** Short badge label for the PR list. */

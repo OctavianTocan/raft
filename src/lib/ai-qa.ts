@@ -85,12 +85,21 @@ ${codeContext ? `SELECTED CODE (${filePath || "unknown file"}):\n${codeContext}\
 
 Answer concisely. Reference specific line numbers and file names. If you're unsure, say so.`
   } else {
-    // Follow-up: include conversation history
+    // Follow-up: include conversation history with PR context
     const history = session.messages
       .map(m => `${m.role === "user" ? "Q" : "A"}: ${m.content}`)
       .join("\n\n")
 
+    // Include PR context so follow-ups stay grounded
+    const fileList = session.files.map(f => `  ${f.filename} (+${f.additions} -${f.deletions})`).join("\n")
+
     prompt = `Continuing a code review conversation.
+
+PR DESCRIPTION:
+${session.prDescription || "(none)"}
+
+FILES IN THIS PR:
+${fileList}
 
 Previous exchange:
 ${history}

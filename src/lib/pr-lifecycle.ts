@@ -132,7 +132,7 @@ export function detectPRState(
   pr: { isDraft: boolean; createdAt: string },
   details: PRDetails | null,
   unresolvedCount?: number | null,
-  ciStatus?: "ready" | "pending" | "failing" | null,
+  ciStatus?: "ready" | "pending" | "failing" | "unknown" | null,
   hasConflicts?: boolean | null,
 ): StateInfo {
   // DRAFT: PR is still in draft mode

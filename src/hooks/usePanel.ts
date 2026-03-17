@@ -7,7 +7,7 @@
  * and neighbor prefetching.
  */
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, type MutableRefObject } from "react"
 import { fetchPRPanelData } from "../lib/github"
 import { PRCache } from "../lib/cache"
 import { LAYOUT } from "../lib/constants"
@@ -21,7 +21,7 @@ export interface PanelState {
   panelFullscreen: boolean
   panelData: PRPanelData | null
   panelLoading: boolean
-  cacheRef: React.RefObject<PRCache>
+  cacheRef: MutableRefObject<PRCache>
   setPanelOpen: (open: boolean) => void
   setPanelTab: (tab: PanelTab | ((prev: PanelTab) => PanelTab)) => void
   setSplitRatio: (ratio: number | ((prev: number) => number)) => void
@@ -57,24 +57,28 @@ export function usePanel(
   // Fetch panel data when panel opens or selected PR changes
   useEffect(() => {
     if (!panelOpen || !selectedPR) return
+    let cancelled = false
 
     const cache = cacheRef.current
     const cached = cache.getPanelData(selectedPR.url)
     if (cached) {
       setPanelData(cached)
       setPanelLoading(false)
-      return
+      return () => { cancelled = true }
     }
 
     setPanelLoading(true)
     setPanelData(null)
     fetchPRPanelData(selectedPR.repo, selectedPR.number)
       .then((data) => {
+        if (cancelled) return
         cache.setPanelData(selectedPR.url, data)
         setPanelData(data)
       })
-      .catch(() => setPanelData(null))
-      .finally(() => setPanelLoading(false))
+      .catch(() => { if (!cancelled) setPanelData(null) })
+      .finally(() => { if (!cancelled) setPanelLoading(false) })
+
+    return () => { cancelled = true }
   }, [panelOpen, selectedPR?.url])
 
   // Prefetch neighbor PR data for smooth navigation

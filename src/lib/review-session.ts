@@ -8,6 +8,7 @@
  * close raft and resume your review where you left off.
  */
 
+import { homedir } from "node:os"
 import type { FileDiff } from "./types"
 
 /** Persistent review state for a single file. */
@@ -26,10 +27,22 @@ export interface ReviewSession {
   lastActivity: string
 }
 
-/** Get the path to the review session file for a PR. */
-function sessionPath(repo: string, prNumber: number): string {
+/** Get the config base directory, respecting XDG and platform conventions. */
+function getConfigDir(): string | null {
+  if (process.env.XDG_CONFIG_HOME) return process.env.XDG_CONFIG_HOME
+  try {
+    const home = homedir()
+    if (home) return `${home}/.config`
+  } catch {}
+  return null
+}
+
+/** Get the path to the review session file for a PR. Returns null if home is unset. */
+function sessionPath(repo: string, prNumber: number): string | null {
+  const configDir = getConfigDir()
+  if (!configDir) return null
   const safeRepo = repo.replace("/", "-")
-  return `${process.env.HOME}/.config/raft/reviews/${safeRepo}-${prNumber}.json`
+  return `${configDir}/raft/reviews/${safeRepo}-${prNumber}.json`
 }
 
 /**
@@ -40,11 +53,22 @@ function sessionPath(repo: string, prNumber: number): string {
  * @returns The loaded or new review session.
  */
 export async function loadSession(repo: string, prNumber: number): Promise<ReviewSession> {
+  const path = sessionPath(repo, prNumber)
+  if (!path) return { repo, prNumber, files: {}, lastActivity: new Date().toISOString() }
+
   try {
-    const file = Bun.file(sessionPath(repo, prNumber))
+    const file = Bun.file(path)
     if (await file.exists()) {
       const data = await file.json()
-      return data as ReviewSession
+      // Basic shape validation before trusting the file
+      if (
+        typeof data === "object" && data !== null &&
+        typeof data.repo === "string" &&
+        typeof data.prNumber === "number" &&
+        typeof data.files === "object"
+      ) {
+        return data as ReviewSession
+      }
     }
   } catch { /* file doesn't exist or is corrupt */ }
 
@@ -64,16 +88,17 @@ export async function loadSession(repo: string, prNumber: number): Promise<Revie
  * @param session - The session to save.
  */
 export async function saveSession(session: ReviewSession): Promise<void> {
-  const dir = `${process.env.HOME}/.config/raft/reviews`
+  const path = sessionPath(session.repo, session.prNumber)
+  if (!path) return
+
+  const dir = path.substring(0, path.lastIndexOf("/"))
   try {
-    // Ensure directory exists
     const { exitCode } = await import("./process").then(m =>
       m.safeSpawn(["mkdir", "-p", dir])
     )
     if (exitCode !== 0) return
 
     session.lastActivity = new Date().toISOString()
-    const path = sessionPath(session.repo, session.prNumber)
     await Bun.write(path, JSON.stringify(session, null, 2))
   } catch { /* best effort */ }
 }

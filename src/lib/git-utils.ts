@@ -41,23 +41,40 @@ export async function runGhMerge(repo: string, prNumber: number): Promise<void> 
 /**
  * Check CI status for a PR.
  *
+ * Handles gh pr checks exit codes:
+ * - 0: command succeeded (parse JSON for check states)
+ * - 8: at least one check pending
+ * - 4: auth required
+ * - 1: generic failure (checks failing or command error)
+ *
  * @param repo - Repository in owner/repo format
  * @param prNumber - PR number to check
- * @returns "ready" if all checks pass, "pending" if still running, "failing" if any failed
+ * @returns "ready", "pending", or "failing"
  */
 export async function checkPRCIStatus(repo: string, prNumber: number): Promise<"ready" | "pending" | "failing"> {
   const { stdout, exitCode } = await safeSpawn(
     ["gh", "pr", "checks", String(prNumber), "--repo", repo, "--json", "state"],
     { env: buildCleanEnv() },
   )
-  if (exitCode !== 0) return "ready" // No checks configured
-  try {
-    const checks = JSON.parse(stdout) as Array<{ state: string }>
-    if (checks.length === 0) return "ready"
-    if (checks.some((c) => c.state === "FAILURE" || c.state === "ERROR")) return "failing"
-    if (checks.some((c) => c.state === "PENDING" || c.state === "EXPECTED")) return "pending"
-    return "ready"
-  } catch {
-    return "ready"
+
+  // Exit code 8 = checks pending
+  if (exitCode === 8) return "pending"
+  // Exit code 4 = auth error, 1 = generic failure
+  if (exitCode === 4 || exitCode === 1) return "failing"
+
+  // Exit code 0: parse the JSON output
+  if (exitCode === 0) {
+    try {
+      const checks = JSON.parse(stdout) as Array<{ state: string }>
+      if (checks.length === 0) return "ready"
+      if (checks.some((c) => c.state === "FAILURE" || c.state === "ERROR")) return "failing"
+      if (checks.some((c) => c.state === "PENDING" || c.state === "EXPECTED")) return "pending"
+      return "ready"
+    } catch {
+      return "failing"
+    }
   }
+
+  // Unknown exit code
+  return "failing"
 }

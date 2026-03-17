@@ -18,35 +18,53 @@ export interface SpawnResult {
 export interface SafeSpawnOpts {
   env?: Record<string, string | undefined>
   cwd?: string
+  /** Timeout in ms. Default 30s. Set 0 to disable. */
+  timeoutMs?: number
+  /** If true, trim stdout/stderr. Default true for backwards compat. */
+  trim?: boolean
 }
 
 /**
  * Spawn a subprocess with guaranteed cleanup of file descriptors.
  *
  * Wraps Bun.spawn() in a try/finally that calls proc.kill() and
- * proc.unref() to prevent fd accumulation. All stdout/stderr are
- * captured as trimmed strings.
+ * proc.unref() to prevent fd accumulation. By default stdout/stderr
+ * are trimmed; pass `trim: false` to preserve exact output (needed
+ * for AI-generated file content).
+ *
+ * Includes a 30s default timeout to prevent hung subprocesses from
+ * blocking workflows. Override with `timeoutMs`.
  *
  * @param cmd - Command and arguments array (e.g. ["gh", "pr", "list"])
- * @param opts - Optional env and cwd overrides
+ * @param opts - Optional env, cwd, timeout, and trim overrides
  * @returns The process stdout, stderr, and exit code
  */
 export async function safeSpawn(cmd: string[], opts?: SafeSpawnOpts): Promise<SpawnResult> {
+  const timeoutMs = opts?.timeoutMs ?? 30_000
+  const shouldTrim = opts?.trim ?? true
   const proc = Bun.spawn(cmd, {
     stdout: "pipe",
     stderr: "pipe",
     env: opts?.env,
     cwd: opts?.cwd,
   })
+  const timeout = timeoutMs > 0
+    ? setTimeout(() => { try { proc.kill() } catch {} }, timeoutMs)
+    : null
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
     ])
-    return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode }
+    return {
+      stdout: shouldTrim ? stdout.trim() : stdout,
+      stderr: shouldTrim ? stderr.trim() : stderr,
+      exitCode,
+    }
   } finally {
-    proc.kill()
+    if (timeout) clearTimeout(timeout)
+    try { proc.kill() } catch {}
     proc.unref()
   }
 }

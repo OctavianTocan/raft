@@ -16,6 +16,11 @@ import type { FileDiff } from "./types"
 /** Severity level for a review finding. */
 export type FindingSeverity = "bug" | "test" | "security" | "warning" | "info"
 
+/** Result of a review scan: either findings or a scan failure. */
+export type ScanResult =
+  | { ok: true; findings: ReviewFinding[] }
+  | { ok: false; error: string }
+
 /** A single finding from the AI review scan. */
 export interface ReviewFinding {
   severity: FindingSeverity
@@ -54,15 +59,15 @@ function shouldSkipFile(filename: string): boolean {
  * @param files - All file diffs in the PR.
  * @param prDescription - The PR body/description.
  * @param onProgress - Optional callback for streaming progress updates.
- * @returns Array of review findings sorted by severity.
+ * @returns ScanResult with findings on success, or error on failure.
  */
 export async function runReviewScan(
   files: FileDiff[],
   prDescription: string,
   onProgress?: (status: string) => void,
-): Promise<ReviewFinding[]> {
+): Promise<ScanResult> {
   const scannable = files.filter(f => f.patch && !shouldSkipFile(f.filename))
-  if (scannable.length === 0) return []
+  if (scannable.length === 0) return { ok: true, findings: [] }
 
   onProgress?.("Scanning PR for issues...")
 
@@ -104,8 +109,11 @@ Do NOT include markdown fences, explanations, or anything other than the JSON ar
       { env: buildCleanEnv() },
     )
 
-    if (exitCode !== 0 || !stdout.trim()) {
-      return []
+    if (exitCode !== 0) {
+      return { ok: false, error: `Claude exited with code ${exitCode}` }
+    }
+    if (!stdout.trim()) {
+      return { ok: false, error: "Empty response from Claude" }
     }
 
     // Parse the JSON response, handling potential markdown fences
@@ -114,7 +122,14 @@ Do NOT include markdown fences, explanations, or anything other than the JSON ar
       jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "")
     }
 
-    const findings = JSON.parse(jsonStr) as Array<{
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(jsonStr)
+    } catch (e) {
+      return { ok: false, error: `Failed to parse scan output: ${e instanceof Error ? e.message : "unknown"}` }
+    }
+
+    const findings = parsed as Array<{
       severity: string
       path: string
       line: number | null
@@ -123,21 +138,23 @@ Do NOT include markdown fences, explanations, or anything other than the JSON ar
 
     // Validate and normalize findings
     const validSeverities = new Set(["bug", "test", "security", "warning", "info"])
-    return findings
-      .filter(f => validSeverities.has(f.severity) && f.path && f.summary)
-      .map(f => ({
-        severity: f.severity as FindingSeverity,
-        path: f.path,
-        line: f.line,
-        summary: f.summary,
-        dismissed: false,
-      }))
-      // Sort by severity: bugs first, then security, test, warning, info
-      .sort((a, b) => {
-        const order: Record<string, number> = { bug: 0, security: 1, test: 2, warning: 3, info: 4 }
-        return (order[a.severity] ?? 5) - (order[b.severity] ?? 5)
-      })
-  } catch {
-    return []
+    return {
+      ok: true,
+      findings: findings
+        .filter(f => validSeverities.has(f.severity) && f.path && f.summary)
+        .map(f => ({
+          severity: f.severity as FindingSeverity,
+          path: f.path,
+          line: f.line,
+          summary: f.summary,
+          dismissed: false,
+        }))
+        .sort((a, b) => {
+          const order: Record<string, number> = { bug: 0, security: 1, test: 2, warning: 3, info: 4 }
+          return (order[a.severity] ?? 5) - (order[b.severity] ?? 5)
+        }),
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown scan error" }
   }
 }

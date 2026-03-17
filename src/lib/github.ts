@@ -330,7 +330,7 @@ export async function fetchPRDetails(repo: string, prNumber: number): Promise<PR
     const [prJson, reviewsJson] = await Promise.all([
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}`,
-        "--jq", "{additions, deletions, comments, headRefName: .head.ref, headSha: .head.sha, mergeable, mergeStateStatus}",
+        "--jq", "{additions, deletions, comments, headRefName: .head.ref, headSha: .head.sha, mergeable, mergeable_state: .mergeable_state}",
       ]),
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}/reviews`,
@@ -344,16 +344,18 @@ export async function fetchPRDetails(repo: string, prNumber: number): Promise<PR
       comments: number
       headRefName: string
       headSha: string
-      mergeable: string | null
-      mergeStateStatus: string | null
+      mergeable: boolean | null
+      mergeable_state: string | null
     }
     const reviews: Review[] = JSON.parse(reviewsJson)
     const [ciStatus, reviewThreads] = await Promise.all([
-      fetchCIStatusWithRunner(repo, pr.headSha, runGh).catch(() => "ready" as const),
-      fetchReviewThreadsWithRunner(repo, prNumber, runGh).catch(() => []),
+      fetchCIStatusWithRunner(repo, pr.headSha, runGh).catch(() => "unknown" as const),
+      fetchReviewThreadsWithRunner(repo, prNumber, runGh).catch(() => null),
     ])
-    const unresolvedThreadCount = reviewThreads.filter((thread) => !thread.isResolved).length
-    const hasConflicts = pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY"
+    const unresolvedThreadCount = reviewThreads !== null
+      ? reviewThreads.filter((thread) => !thread.isResolved).length
+      : -1
+    const hasConflicts = pr.mergeable === false || pr.mergeable_state === "dirty"
 
     return {
       additions: pr.additions,
@@ -517,14 +519,18 @@ async function fetchReviewThreadsWithRunner(
   ghRunner: GhRunner,
 ): Promise<ReviewThread[]> {
   const [owner, name] = repo.split("/")
-  const query = `query {
-    repository(owner: "${owner}", name: "${name}") {
-      pullRequest(number: ${prNumber}) {
+  /**
+   * NOTE: Threads with >100 items or >50 comments per thread are truncated.
+   * Full pagination is deferred.
+   */
+  const query = `query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
         reviewThreads(first: 100) {
           nodes {
             id
             isResolved
-            comments(first: 10) {
+            comments(first: 50) {
               nodes {
                 databaseId
                 author { login }
@@ -540,13 +546,19 @@ async function fetchReviewThreadsWithRunner(
     }
   }`
 
-  const result = await ghRunner(["api", "graphql", "-f", `query=${query}`])
+  const result = await ghRunner([
+    "api", "graphql",
+    "-f", `query=${query}`,
+    "-F", `owner=${owner}`,
+    "-F", `name=${name}`,
+    "-F", `number=${prNumber}`,
+  ])
   const data = JSON.parse(result)
   const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []
   return threads.map((t: any) => ({
     id: t.id,
     isResolved: t.isResolved,
-    comments: (t.comments?.nodes ?? []).map((c: any) => ({
+    comments: (t.comments?.nodes ?? []).filter((c: any) => c.databaseId != null).map((c: any) => ({
       id: c.databaseId,
       author: c.author?.login ?? "unknown",
       body: c.body,
@@ -579,13 +591,13 @@ export async function resolveReviewThread(threadId: string): Promise<void> {
  *
  * @param repo - Full repository name in owner/repo format.
  * @param ref - Git ref (branch name or SHA) to check.
- * @returns "ready" if all pass, "pending" if running, "failing" if any failed.
+ * @returns "ready" if all pass, "pending" if running, "failing" if any failed, "unknown" if status cannot be determined.
  */
-export async function fetchCIStatus(repo: string, ref: string): Promise<"ready" | "pending" | "failing"> {
+export async function fetchCIStatus(repo: string, ref: string): Promise<"ready" | "pending" | "failing" | "unknown"> {
   try {
     return await tryMultiAccountFetch(() => fetchCIStatusWithRunner(repo, ref, runGh))
   } catch {
-    return "ready" // Can't determine, assume ok
+    return "unknown" // Can't determine status
   }
 }
 
@@ -593,11 +605,11 @@ async function fetchCIStatusWithRunner(
   repo: string,
   ref: string,
   ghRunner: GhRunner,
-): Promise<"ready" | "pending" | "failing"> {
+): Promise<"ready" | "pending" | "failing" | "unknown"> {
   const result = await ghRunner(["api", `repos/${repo}/commits/${ref}/check-runs`, "--jq", ".check_runs"])
   const checks = JSON.parse(result) as Array<{ status: string; conclusion: string | null }>
   if (checks.length === 0) return "ready"
-  if (checks.some(c => c.conclusion === "failure" || c.conclusion === "timed_out")) return "failing"
+  if (checks.some(c => ["failure", "timed_out", "cancelled", "action_required"].includes(c.conclusion ?? ""))) return "failing"
   if (checks.some(c => c.status !== "completed")) return "pending"
   return "ready"
 }

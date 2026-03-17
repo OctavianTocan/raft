@@ -93,14 +93,15 @@ Fix the issue described in the review comment. Output the COMPLETE modified file
   try {
     const { stdout, exitCode } = await safeSpawn(
       ["claude", "-p", "--model", "sonnet", prompt],
-      { env: buildCleanEnv() },
+      { env: buildCleanEnv(), trim: false },
     )
 
     if (exitCode !== 0 || !stdout.trim()) {
       return null
     }
 
-    const modifiedContent = stdout
+    // trimEnd to remove trailing whitespace but preserve leading content
+    const modifiedContent = stdout.trimEnd()
 
     // Generate a simple diff for display
     const diff = generateSimpleDiff(fileContent, modifiedContent, filePath)

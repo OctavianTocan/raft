@@ -1,10 +1,10 @@
 /**
  * Semantic color token system for raft.
  *
- * All colors in the app route through this system instead of raw hex
- * strings. This enables future theme switching and ensures consistent
- * color semantics (e.g. state.mergeNow is always green regardless of
- * the active theme).
+ * New code should use theme tokens (e.g. getTheme().accent.primary)
+ * instead of raw hex strings. Existing code is being migrated
+ * incrementally - constants.ts COLORS is the legacy source that
+ * will eventually be replaced by theme tokens.
  *
  * Tokyo Night is the single shipped theme. The infrastructure exists
  * for future extensibility but we don't waste time on multiple themes
