@@ -15,6 +15,15 @@ interface RawSearchResult {
   author?: { login: string }
 }
 
+/**
+ * Parse GitHub search JSON results into PullRequest objects.
+ *
+ * Converts raw GitHub CLI JSON output from `gh search prs` into a normalized
+ * PullRequest array. Truncates body to first line and 80 characters.
+ *
+ * @param jsonStr - Raw JSON string from GitHub CLI search output
+ * @returns Array of normalized PullRequest objects
+ */
 export function parseSearchResults(jsonStr: string): PullRequest[] {
   const raw: RawSearchResult[] = JSON.parse(jsonStr)
   return raw.map((pr) => {
@@ -35,6 +44,15 @@ export function parseSearchResults(jsonStr: string): PullRequest[] {
   })
 }
 
+/**
+ * Remove stack numbering prefix from a PR title.
+ *
+ * Strips the `[n/m]` prefix that marks PR position in a stacked series.
+ * Example: `[2/4] Add auth` becomes `Add auth`.
+ *
+ * @param title - PR title potentially prefixed with stack notation
+ * @returns Title without the prefix
+ */
 export function stripStackPrefix(title: string): string {
   return title.replace(/^\[\d+\/\d+\]\s*/, "")
 }
@@ -146,6 +164,17 @@ export async function fetchAllAccountPRs(
   return allPRs
 }
 
+/**
+ * Fetch open pull requests for a specific author or all accessible repositories.
+ *
+ * - If `author` is undefined: fetches PRs across all authenticated accounts via `@me`.
+ * - If `author` is empty string: fetches all open PRs accessible to the current account.
+ * - If `author` is provided: fetches PRs by that specific author.
+ *
+ * @param author - GitHub username or empty string for all repos, undefined for @me across accounts
+ * @param onProgress - Optional callback for progress status messages
+ * @returns Array of open pull requests
+ */
 export async function fetchOpenPRs(
   author?: string,
   onProgress?: (status: string) => void,
@@ -236,10 +265,27 @@ export async function fetchRepoPRs(repo: string): Promise<PullRequest[]> {
   return []
 }
 
+/**
+ * Update a PR's title via the GitHub API.
+ *
+ * @param repo - Full repository name in `owner/repo` format
+ * @param prNumber - The pull request number
+ * @param title - New title for the PR
+ */
 export async function updatePRTitle(repo: string, prNumber: number, title: string): Promise<void> {
   await runGh(["pr", "edit", String(prNumber), "--repo", repo, "--title", title])
 }
 
+/**
+ * Find the ID of a stacked PR's metadata comment.
+ *
+ * Searches for an issue comment containing the STACK_COMMENT_MARKER.
+ * Used to locate and update stack information (rebase status, dependencies).
+ *
+ * @param repo - Full repository name in `owner/repo` format
+ * @param prNumber - The pull request number
+ * @returns Comment ID if found, null otherwise
+ */
 export async function findStackComment(repo: string, prNumber: number): Promise<number | null> {
   const json = await runGh([
     "api",
@@ -251,6 +297,16 @@ export async function findStackComment(repo: string, prNumber: number): Promise<
   return isNaN(id) ? null : id
 }
 
+/**
+ * Create or update a stacked PR's metadata comment.
+ *
+ * If a comment with STACK_COMMENT_MARKER exists, updates it. Otherwise creates a new one.
+ * Used to track rebase status and dependencies in stacked PR workflows.
+ *
+ * @param repo - Full repository name in `owner/repo` format
+ * @param prNumber - The pull request number
+ * @param body - Body content (without marker; marker is added automatically)
+ */
 export async function upsertStackComment(
   repo: string,
   prNumber: number,
@@ -275,6 +331,14 @@ export async function upsertStackComment(
   }
 }
 
+/**
+ * Get the current repository name from the working directory.
+ *
+ * Uses `gh repo view` to detect the repository that contains the current git checkout.
+ * Returns null if not in a git repository or gh cannot determine the repo.
+ *
+ * @returns Repository name in `owner/repo` format, or null if not in a repository
+ */
 export async function getCurrentRepo(): Promise<string | null> {
   try {
     const result = await runGh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
