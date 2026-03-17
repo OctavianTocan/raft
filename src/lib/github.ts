@@ -1,6 +1,7 @@
 import type { PullRequest, PRDetails, Review, PRPanelData, Comment, CodeComment, FileDiff } from "./types"
 import { STACK_COMMENT_MARKER } from "./types"
 import { safeSpawn, buildCleanEnv } from "./process"
+import { hydrateCodeComments } from "./review-threads"
 
 interface RawSearchResult {
   number: number
@@ -48,6 +49,8 @@ async function runGh(args: string[]): Promise<string> {
   }
   return stdout
 }
+
+type GhRunner = typeof runGh
 
 /** Get all authenticated gh account usernames. */
 export async function getGhAccounts(): Promise<string[]> {
@@ -327,7 +330,7 @@ export async function fetchPRDetails(repo: string, prNumber: number): Promise<PR
     const [prJson, reviewsJson] = await Promise.all([
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}`,
-        "--jq", "{additions, deletions, comments, head: .head.ref}",
+        "--jq", "{additions, deletions, comments, headRefName: .head.ref, headSha: .head.sha, mergeable, mergeStateStatus}",
       ]),
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}/reviews`,
@@ -335,15 +338,32 @@ export async function fetchPRDetails(repo: string, prNumber: number): Promise<PR
       ]),
     ])
 
-    const pr = JSON.parse(prJson)
+    const pr = JSON.parse(prJson) as {
+      additions: number
+      deletions: number
+      comments: number
+      headRefName: string
+      headSha: string
+      mergeable: string | null
+      mergeStateStatus: string | null
+    }
     const reviews: Review[] = JSON.parse(reviewsJson)
+    const [ciStatus, reviewThreads] = await Promise.all([
+      fetchCIStatusWithRunner(repo, pr.headSha, runGh).catch(() => "ready" as const),
+      fetchReviewThreadsWithRunner(repo, prNumber, runGh).catch(() => []),
+    ])
+    const unresolvedThreadCount = reviewThreads.filter((thread) => !thread.isResolved).length
+    const hasConflicts = pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY"
 
     return {
       additions: pr.additions,
       deletions: pr.deletions,
       commentCount: pr.comments,
       reviews,
-      headRefName: pr.head,
+      headRefName: pr.headRefName,
+      unresolvedThreadCount,
+      ciStatus,
+      hasConflicts,
     }
   })
 }
@@ -351,7 +371,7 @@ export async function fetchPRDetails(repo: string, prNumber: number): Promise<PR
 /** Fetch full PR data for the preview panel: body, conversation comments, code comments. */
 export async function fetchPRPanelData(repo: string, prNumber: number): Promise<PRPanelData> {
   return tryMultiAccountFetch(async () => {
-    const [bodyJson, issueCommentsJson, codeCommentsJson, filesJson] = await Promise.all([
+    const [bodyJson, issueCommentsJson, codeCommentsJson, filesJson, reviewThreads] = await Promise.all([
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}`,
         "--jq", ".body",
@@ -368,11 +388,15 @@ export async function fetchPRPanelData(repo: string, prNumber: number): Promise<
         "api", `repos/${repo}/pulls/${prNumber}/files`,
         "--jq", "[.[] | {filename: .filename, status: .status, additions: .additions, deletions: .deletions, changes: .changes, patch: .patch, previousFilename: .previous_filename}]",
       ]),
+      fetchReviewThreadsWithRunner(repo, prNumber, runGh).catch(() => []),
     ])
 
     const body = bodyJson || ""
     const comments: Comment[] = JSON.parse(issueCommentsJson || "[]")
-    const codeComments: CodeComment[] = JSON.parse(codeCommentsJson || "[]")
+    const codeComments = hydrateCodeComments(
+      JSON.parse(codeCommentsJson || "[]") as CodeComment[],
+      reviewThreads,
+    )
     const files: FileDiff[] = JSON.parse(filesJson || "[]")
 
     return { body, comments, codeComments, files }
@@ -464,6 +488,7 @@ export interface ReviewThread {
   id: string
   isResolved: boolean
   comments: Array<{
+    id: number
     author: string
     body: string
     path: string
@@ -483,6 +508,14 @@ export interface ReviewThread {
  * @returns Array of review threads with their resolution status.
  */
 export async function fetchReviewThreads(repo: string, prNumber: number): Promise<ReviewThread[]> {
+  return tryMultiAccountFetch(() => fetchReviewThreadsWithRunner(repo, prNumber, runGh))
+}
+
+async function fetchReviewThreadsWithRunner(
+  repo: string,
+  prNumber: number,
+  ghRunner: GhRunner,
+): Promise<ReviewThread[]> {
   const [owner, name] = repo.split("/")
   const query = `query {
     repository(owner: "${owner}", name: "${name}") {
@@ -493,6 +526,7 @@ export async function fetchReviewThreads(repo: string, prNumber: number): Promis
             isResolved
             comments(first: 10) {
               nodes {
+                databaseId
                 author { login }
                 body
                 path
@@ -506,22 +540,21 @@ export async function fetchReviewThreads(repo: string, prNumber: number): Promis
     }
   }`
 
-  return tryMultiAccountFetch(async () => {
-    const result = await runGh(["api", "graphql", "-f", `query=${query}`])
-    const data = JSON.parse(result)
-    const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []
-    return threads.map((t: any) => ({
-      id: t.id,
-      isResolved: t.isResolved,
-      comments: (t.comments?.nodes ?? []).map((c: any) => ({
-        author: c.author?.login ?? "unknown",
-        body: c.body,
-        path: c.path,
-        line: c.line,
-        createdAt: c.createdAt,
-      })),
-    }))
-  })
+  const result = await ghRunner(["api", "graphql", "-f", `query=${query}`])
+  const data = JSON.parse(result)
+  const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []
+  return threads.map((t: any) => ({
+    id: t.id,
+    isResolved: t.isResolved,
+    comments: (t.comments?.nodes ?? []).map((c: any) => ({
+      id: c.databaseId,
+      author: c.author?.login ?? "unknown",
+      body: c.body,
+      path: c.path,
+      line: c.line,
+      createdAt: c.createdAt,
+    })),
+  }))
 }
 
 /**
@@ -550,17 +583,23 @@ export async function resolveReviewThread(threadId: string): Promise<void> {
  */
 export async function fetchCIStatus(repo: string, ref: string): Promise<"ready" | "pending" | "failing"> {
   try {
-    const result = await tryMultiAccountFetch(async () => {
-      return runGh(["api", `repos/${repo}/commits/${ref}/check-runs`, "--jq", ".check_runs"])
-    })
-    const checks = JSON.parse(result) as Array<{ status: string; conclusion: string | null }>
-    if (checks.length === 0) return "ready"
-    if (checks.some(c => c.conclusion === "failure" || c.conclusion === "timed_out")) return "failing"
-    if (checks.some(c => c.status !== "completed")) return "pending"
-    return "ready"
+    return await tryMultiAccountFetch(() => fetchCIStatusWithRunner(repo, ref, runGh))
   } catch {
     return "ready" // Can't determine, assume ok
   }
+}
+
+async function fetchCIStatusWithRunner(
+  repo: string,
+  ref: string,
+  ghRunner: GhRunner,
+): Promise<"ready" | "pending" | "failing"> {
+  const result = await ghRunner(["api", `repos/${repo}/commits/${ref}/check-runs`, "--jq", ".check_runs"])
+  const checks = JSON.parse(result) as Array<{ status: string; conclusion: string | null }>
+  if (checks.length === 0) return "ready"
+  if (checks.some(c => c.conclusion === "failure" || c.conclusion === "timed_out")) return "failing"
+  if (checks.some(c => c.status !== "completed")) return "pending"
+  return "ready"
 }
 
 /**

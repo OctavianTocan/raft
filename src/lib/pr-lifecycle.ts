@@ -131,9 +131,9 @@ function daysSince(dateStr: string): number {
 export function detectPRState(
   pr: { isDraft: boolean; createdAt: string },
   details: PRDetails | null,
-  unresolvedCount: number = 0,
-  ciStatus: "ready" | "pending" | "failing" | null = null,
-  hasConflicts: boolean = false,
+  unresolvedCount?: number | null,
+  ciStatus?: "ready" | "pending" | "failing" | null,
+  hasConflicts?: boolean | null,
 ): StateInfo {
   // DRAFT: PR is still in draft mode
   if (pr.isDraft) {
@@ -148,9 +148,12 @@ export function detectPRState(
   }
 
   const reviews = details?.reviews ?? []
+  const effectiveUnresolvedCount = unresolvedCount ?? details?.unresolvedThreadCount ?? null
+  const effectiveCiStatus = ciStatus ?? details?.ciStatus ?? null
+  const effectiveHasConflicts = hasConflicts ?? details?.hasConflicts ?? false
 
   // RESOLVE_CONFLICTS: merge conflicts block everything
-  if (hasConflicts) {
+  if (effectiveHasConflicts) {
     return {
       state: "RESOLVE_CONFLICTS",
       urgency: 70,
@@ -162,7 +165,7 @@ export function detectPRState(
   }
 
   // FIX_CI: CI failing blocks merge
-  if (ciStatus === "failing") {
+  if (effectiveCiStatus === "failing") {
     return {
       state: "FIX_CI",
       urgency: 70,
@@ -177,8 +180,8 @@ export function detectPRState(
   if (
     hasHumanApproval(reviews) &&
     !hasHumanChangesRequested(reviews) &&
-    unresolvedCount === 0 &&
-    (ciStatus === "ready" || ciStatus === null)
+    effectiveUnresolvedCount === 0 &&
+    effectiveCiStatus === "ready"
   ) {
     const approvalCount = countHumanApprovals(reviews)
     return {
@@ -198,25 +201,25 @@ export function detectPRState(
       urgency: 90,
       label: "FIX",
       color: "#e0af68",
-      action: `${unresolvedCount || "?"} comments to fix`,
+      action: `${effectiveUnresolvedCount ?? "?"} comments to fix`,
       keybind: "F",
     }
   }
 
   // AI_REVIEW: only bot reviews, likely greploop running
-  if (hasOnlyBotReviews(reviews) && unresolvedCount > 0) {
+  if (hasOnlyBotReviews(reviews) && (effectiveUnresolvedCount ?? 0) > 0) {
     return {
       state: "AI_REVIEW",
       urgency: 50,
       label: "AI REVIEW",
       color: "#7aa2f7",
-      action: `Greploop: ${unresolvedCount} comments left`,
+      action: `Greploop: ${effectiveUnresolvedCount} comments left`,
       keybind: "",
     }
   }
 
   // PING_REVIEWERS: no human reviews yet, clean state
-  if (!hasAnyHumanReview(reviews) && unresolvedCount === 0) {
+  if (!hasAnyHumanReview(reviews) && effectiveUnresolvedCount === 0 && !effectiveHasConflicts) {
     return {
       state: "PING_REVIEWERS",
       urgency: 80,

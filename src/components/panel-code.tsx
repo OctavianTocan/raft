@@ -11,6 +11,7 @@
 import React from "react"
 import type { CodeComment } from "../lib/types"
 import { formatRelativeAge, truncate } from "../lib/format"
+import { getCodeCommentThreadStats } from "../lib/review-threads"
 
 /** Props for the {@link PanelCode} component. */
 interface PanelCodeProps {
@@ -18,6 +19,8 @@ interface PanelCodeProps {
   codeComments: CodeComment[]
   /** Available width in columns. */
   width: number
+  /** Currently active comment index for keyboard navigation. */
+  activeIndex?: number
 }
 
 /**
@@ -25,7 +28,7 @@ interface PanelCodeProps {
  * Unresolved threads render with full color and a red border marker.
  * Resolved threads render dimmed to visually recede.
  */
-export function PanelCode({ codeComments, width }: PanelCodeProps) {
+export function PanelCode({ codeComments, width, activeIndex = -1 }: PanelCodeProps) {
   if (codeComments.length === 0) {
     return (
       <box paddingX={1}>
@@ -34,26 +37,26 @@ export function PanelCode({ codeComments, width }: PanelCodeProps) {
     )
   }
 
-  const unresolvedCount = codeComments.filter(c => !c.isResolved).length
-  const totalCount = codeComments.length
+  const { unresolvedThreads, totalThreads } = getCodeCommentThreadStats(codeComments)
 
   return (
     <box flexDirection="column" width={width}>
       {/* Thread count header */}
       <box height={1} paddingX={1} marginBottom={1}>
         <text>
-          {unresolvedCount > 0 ? (
-            <span fg="#f7768e">{unresolvedCount} unresolved</span>
+          {unresolvedThreads > 0 ? (
+            <span fg="#f7768e">{unresolvedThreads} unresolved</span>
           ) : (
             <span fg="#9ece6a">All resolved</span>
           )}
-          <span fg="#6b7089"> / {totalCount} threads  (n: next unresolved, R: resolve)</span>
+          <span fg="#6b7089"> / {totalThreads} threads  (n: next unresolved, R: resolve)</span>
         </text>
       </box>
 
       {codeComments.map((comment, idx) => {
         const age = formatRelativeAge(comment.createdAt)
         const isResolved = comment.isResolved === true
+        const isActive = idx === activeIndex
 
         // Resolved threads use muted colors, unresolved use full colors
         const borderColor = isResolved ? "#3b3d57" : "#f7768e"
@@ -63,7 +66,12 @@ export function PanelCode({ codeComments, width }: PanelCodeProps) {
         const metaColor = isResolved ? "#3b3d57" : "#6b7089"
 
         return (
-          <box key={`cc-${idx}`} flexDirection="column" marginBottom={1}>
+          <box
+            key={`cc-${idx}`}
+            flexDirection="column"
+            marginBottom={1}
+            backgroundColor={isActive ? "#1f2335" : "transparent"}
+          >
             {/* Header: resolution status + author + timestamp */}
             <box height={1} paddingX={1}>
               <text>

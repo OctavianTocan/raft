@@ -47,6 +47,12 @@ export interface PRDetails {
   commentCount: number
   reviews: Review[]
   headRefName: string
+  /** Count of unresolved review threads when available. */
+  unresolvedThreadCount?: number
+  /** Current CI status for the PR head when available. */
+  ciStatus?: "ready" | "pending" | "failing" | null
+  /** Whether the PR currently has merge conflicts. */
+  hasConflicts?: boolean
 }
 
 /** An issue-level comment on a pull request. */

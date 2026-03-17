@@ -4,11 +4,12 @@ import { PRTable } from "../components/pr-table"
 import { Spinner } from "../components/spinner"
 import { SkeletonList } from "../components/skeleton"
 import { StatusView } from "../components/status-view"
-import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, submitPRReview, postPRComment, replyToReviewComment } from "../lib/github"
+import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, submitPRReview, postPRComment, replyToReviewComment, resolveReviewThread } from "../lib/github"
 import { shortRepoName } from "../lib/format"
 import { PreviewPanel } from "../components/preview-panel"
 import { usePanel } from "../hooks/usePanel"
 import { detectPRState, compareByUrgency } from "../lib/pr-lifecycle"
+import { findNextUnresolvedCommentIndex, getCodeCommentThreadStats, markThreadResolved } from "../lib/review-threads"
 import type { PullRequest, Density, PRDetails, PanelTab, PRPanelData, PRLifecycleInfo } from "../lib/types"
 import { groupByRepo, groupByStack, groupByRepoAndStack, type GroupMode, type GroupedData } from "../lib/grouping"
 
@@ -51,6 +52,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [replyMode, setReplyMode] = useState(false)
   const [replyText, setReplyText] = useState("")
   const [replyCommentId, setReplyCommentId] = useState<number | null>(null)
+  const [activeCodeCommentIndex, setActiveCodeCommentIndex] = useState(0)
 
   // Detect current repo on mount
   useEffect(() => {
@@ -219,6 +221,15 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     return detectPRState(selectedPR, details)
   }, [selectedPR, detailsMap])
 
+  useEffect(() => {
+    if (!panelOpen || panelTab !== "code" || !panelData || panelData.codeComments.length === 0) {
+      setActiveCodeCommentIndex(0)
+      return
+    }
+    const nextIndex = findNextUnresolvedCommentIndex(panelData.codeComments, -1)
+    setActiveCodeCommentIndex(nextIndex >= 0 ? nextIndex : 0)
+  }, [panelOpen, panelTab, panelData])
+
   // Compute visible window: reserve 7 lines for header/tabs/repo/search/detail/keybinds
   const rowHeight = density === "detailed" ? 2 : 1
   const listHeight = Math.max(3, Math.floor((termHeight - 9) / rowHeight))
@@ -330,6 +341,51 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           Bun.spawn(["open", selectedPR.url], { stdout: "ignore", stderr: "ignore" })
           showFlash("Opening " + selectedPR.url)
         }
+      } else if (key.name === "n" && panelTab === "code" && panelData) {
+        const nextIndex = findNextUnresolvedCommentIndex(panelData.codeComments, activeCodeCommentIndex)
+        if (nextIndex >= 0) {
+          setActiveCodeCommentIndex(nextIndex)
+          const nextComment = panelData.codeComments[nextIndex]
+          showFlash(`Next unresolved: ${nextComment.path}:${nextComment.line}`)
+        } else {
+          showFlash("No unresolved threads")
+        }
+      } else if (key.sequence === "R" && panelTab === "code" && panelData && selectedPR) {
+        const fallbackIndex = findNextUnresolvedCommentIndex(panelData.codeComments, -1)
+        const currentComment = panelData.codeComments[activeCodeCommentIndex]
+        const targetComment =
+          currentComment && currentComment.isResolved !== true && currentComment.threadId
+            ? currentComment
+            : (fallbackIndex >= 0 ? panelData.codeComments[fallbackIndex] : null)
+
+        if (!targetComment?.threadId) {
+          showFlash("No unresolved thread selected")
+        } else {
+          showFlash("Resolving thread...")
+          resolveReviewThread(targetComment.threadId)
+            .then(() => {
+              const updatedComments = markThreadResolved(panelData.codeComments, targetComment.threadId!)
+              const updatedPanelData = { ...panelData, codeComments: updatedComments }
+              setPanelData(updatedPanelData)
+              cacheRef.current.setPanelData(selectedPR.url, updatedPanelData)
+
+              setDetailsMap((prev) => {
+                const details = prev.get(selectedPR.url)
+                if (!details) return prev
+                const next = new Map(prev)
+                next.set(selectedPR.url, {
+                  ...details,
+                  unresolvedThreadCount: getCodeCommentThreadStats(updatedComments).unresolvedThreads,
+                })
+                return next
+              })
+
+              const nextIndex = findNextUnresolvedCommentIndex(updatedComments, activeCodeCommentIndex)
+              setActiveCodeCommentIndex(nextIndex >= 0 ? nextIndex : 0)
+              showFlash("Thread resolved")
+            })
+            .catch(() => showFlash("Failed to resolve thread"))
+        }
       } else if (key.name === "e" && panelTab === "files" && panelData && selectedPR) {
         // Generate AI explanations with progressive per-file updates
         showFlash("Generating explanations...")
@@ -356,14 +412,14 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         renderer.copyToClipboardOSC52(selectedPR.url)
         showFlash("Copied URL!")
       } else if (key.name === "r" && panelTab === "code" && panelData && selectedPR) {
-        // Reply to the most recent code comment
+        // Reply to the currently selected code comment
         const comments = panelData.codeComments
-        if (comments.length > 0) {
-          const lastComment = comments[comments.length - 1]
-          setReplyCommentId(lastComment.id)
+        const targetComment = comments[activeCodeCommentIndex] ?? comments[comments.length - 1]
+        if (targetComment) {
+          setReplyCommentId(targetComment.id)
           setReplyMode(true)
           setReplyText("")
-          showFlash(`Replying to @${lastComment.author} on ${lastComment.path}...`)
+          showFlash(`Replying to @${targetComment.author} on ${targetComment.path}...`)
         } else {
           showFlash("No code comments to reply to")
         }
@@ -619,6 +675,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
               panelData={panelData}
               loading={panelLoading}
               tab={panelTab}
+              activeCodeCommentIndex={activeCodeCommentIndex}
               width={panelFullscreen ? termWidth : Math.floor(termWidth * splitRatio)}
               height={termHeight - 6}
             />
