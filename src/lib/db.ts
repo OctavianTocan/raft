@@ -35,6 +35,36 @@ db.run(`
   )
 `);
 
+db.run(`
+  CREATE TABLE IF NOT EXISTS generated_fixes (
+    id TEXT PRIMARY KEY,
+    pr_url TEXT NOT NULL,
+    thread_id TEXT,
+    data JSON NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+export function getGeneratedFixes(prUrl: string): any[] {
+  const query = db.query(`SELECT data FROM generated_fixes WHERE pr_url = ?`);
+  return query.all(prUrl).map((row: any) => JSON.parse(row.data));
+}
+
+export function cacheGeneratedFix(prUrl: string, threadId: string | null, fix: any) {
+  const id = `${prUrl}::${threadId || "ci"}`;
+  const insert = db.prepare(`
+    INSERT OR REPLACE INTO generated_fixes (id, pr_url, thread_id, data, updated_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `);
+  insert.run(id, prUrl, threadId, JSON.stringify(fix));
+}
+
+export function clearGeneratedFix(prUrl: string, threadId: string | null) {
+  const id = `${prUrl}::${threadId || "ci"}`;
+  const del = db.prepare(`DELETE FROM generated_fixes WHERE id = ?`);
+  del.run(id);
+}
+
 export function getCachedPRs(): PullRequest[] {
   const query = db.query(`SELECT data FROM pull_requests`);
   return query.all().map((row: any) => JSON.parse(row.data));

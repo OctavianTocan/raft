@@ -12,7 +12,10 @@ import { detectPRState, compareByUrgency } from "../lib/pr-lifecycle"
 import { findNextUnresolvedCommentIndex, getCodeCommentThreadStats, markThreadResolved } from "../lib/review-threads"
 import type { PullRequest, Density, PRDetails, PanelTab, PRPanelData, PRLifecycleInfo } from "../lib/types"
 import { groupByRepo, groupByStack, groupByRepoAndStack, type GroupMode, type GroupedData } from "../lib/grouping"
-import { getCachedPRs, cachePRs } from "../lib/db"
+import { getCachedPRs, cachePRs, getGeneratedFixes, clearGeneratedFix } from "../lib/db"
+import { runBackgroundDaemon } from "../lib/daemon"
+import { applyFix } from "../lib/ai-fix"
+import { getRepoRoot } from "../lib/git-utils"
 
 interface LsCommandProps {
   author?: string
@@ -54,6 +57,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [replyText, setReplyText] = useState("")
   const [replyCommentId, setReplyCommentId] = useState<number | null>(null)
   const [activeCodeCommentIndex, setActiveCodeCommentIndex] = useState(0)
+  const [fixUpdateTrigger, setFixUpdateTrigger] = useState(0)
 
   // Detect current repo on mount
   useEffect(() => {
@@ -148,10 +152,17 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     for (const pr of filteredPRs) {
       const details = detailsMap.get(pr.url) ?? null
       const state = detectPRState(pr, details)
-      map.set(pr.url, state.urgency)
+      let urgency = state.urgency
+      
+      // Auto-fixes are the absolute highest priority (urgency 110)
+      if (getGeneratedFixes(pr.url).length > 0) {
+        urgency = 110
+      }
+      
+      map.set(pr.url, urgency)
     }
     return map
-  }, [filteredPRs, detailsMap])
+  }, [filteredPRs, detailsMap, fixUpdateTrigger])
 
   const sortedPRs = useMemo(() => {
     const copy = [...filteredPRs]
@@ -212,7 +223,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     const cache = cacheRef.current
     const toFetch = filteredPRs.filter(pr => !cache.hasDetails(pr.url))
     
-    const urlFingerprint = filteredPRs.map(pr => pr.url).sort().join('\\n')
+    const urlFingerprint = filteredPRs.map(pr => pr.url).sort().join('\n')
     
     const buildMap = () => {
       if (urlFingerprint === prevDetailUrlsRef.current && toFetch.length === 0) return
@@ -223,6 +234,11 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       }
       prevDetailUrlsRef.current = urlFingerprint
       setDetailsMap(map)
+      
+      // Start daemon when details map is updated
+      runBackgroundDaemon(filteredPRs, map, () => {
+        setFixUpdateTrigger(t => t + 1)
+      })
     }
 
     if (toFetch.length === 0) {
@@ -253,6 +269,12 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     const details = detailsMap.get(selectedPR.url) ?? null
     return detectPRState(selectedPR, details)
   }, [selectedPR, detailsMap])
+
+  const selectedFixes = useMemo(() => {
+    if (!selectedPR) return []
+    // We depend on fixUpdateTrigger to re-evaluate when daemon finishes a fix
+    return getGeneratedFixes(selectedPR.url)
+  }, [selectedPR, fixUpdateTrigger])
 
   useEffect(() => {
     if (!panelOpen || panelTab !== "code" || !panelData || panelData.codeComments.length === 0) {
@@ -576,6 +598,39 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     } else if (key.name === "p") {
       setPanelOpen(true)
       setPanelTab("body")
+    } else if (key.name === "space" && selectedPR) {
+      // The Universal "Resolve" key: maps to the optimal next action based on context
+      if (selectedFixes.length > 0) {
+        showFlash("Applying AI fix...")
+        getRepoRoot().then((root) => {
+          if (!root) { showFlash("Error: Not in a local git repo."); return }
+          const fix = selectedFixes[0]
+          applyFix(fix, selectedPR, root)
+            .then(() => {
+              clearGeneratedFix(selectedPR.url, fix.threadId)
+              setFixUpdateTrigger(t => t + 1)
+              showFlash("Fix pushed to PR branch!")
+            })
+            .catch(() => showFlash("Failed to apply fix."))
+        })
+      } else if (selectedLifecycle?.state === "MERGE_NOW") {
+        showFlash("Merging PR...")
+        import("../lib/git-utils").then(({ runGhMerge }) => {
+          runGhMerge(selectedPR.repo, selectedPR.number)
+            .then(() => showFlash(`Merged #${selectedPR.number}!`))
+            .catch((e) => showFlash(`Merge failed: ${e instanceof Error ? e.message : "unknown"}`))
+        })
+      } else if (selectedLifecycle?.state === "FIX_REVIEW") {
+        setPanelOpen(true)
+        setPanelTab("code")
+        showFlash("Showing review threads. Waiting for AI fix generation...")
+      } else if (selectedLifecycle?.state === "PING_REVIEWERS") {
+        renderer.copyToClipboardOSC52(selectedPR.url)
+        showFlash(`Copied URL for #${selectedPR.number}. Ping your reviewers!`)
+      } else {
+        // Skip to next PR if no actionable item
+        setSelectedIndex((i) => Math.min(sortedPRs.length - 1, i + 1))
+      }
     } else if (key.name === "m" && selectedPR && selectedLifecycle?.state === "MERGE_NOW") {
       // Lifecycle action: merge an approved PR
       showFlash("Merging PR...")
@@ -750,6 +805,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           replyMode={replyMode}
           replyText={replyText}
           panelOpen={panelOpen}
+          fixCount={selectedFixes.length}
         />
       ) : (
         <box flexDirection="column" paddingX={1} paddingY={1} borderColor="#292e42" border>

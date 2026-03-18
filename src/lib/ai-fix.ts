@@ -12,6 +12,8 @@
 
 import { safeSpawn, buildCleanEnv } from "./process"
 import type { ReviewThread } from "./github"
+import type { PullRequest } from "./types"
+import { prepareShadowWorktree, cleanupShadowWorktree } from "./shadow"
 
 /** A proposed fix for a single review thread. */
 export interface ProposedFix {
@@ -122,14 +124,33 @@ Fix the issue described in the review comment. Output the COMPLETE modified file
 }
 
 /**
- * Apply a proposed fix by writing the modified content to the file.
+ * Apply a proposed fix by writing the modified content to a shadow worktree,
+ * committing it, and pushing it to the remote.
  *
  * @param fix - The proposed fix to apply.
+ * @param pr - The pull request the fix is for.
  * @param repoRoot - Absolute path to the local git repo root.
  */
-export async function applyFix(fix: ProposedFix, repoRoot: string): Promise<void> {
-  const filePath = `${repoRoot}/${fix.path}`
+export async function applyFix(fix: ProposedFix, pr: PullRequest, repoRoot: string): Promise<void> {
+  const wtDir = await prepareShadowWorktree(repoRoot, pr.number)
+  
+  const filePath = `${wtDir}/${fix.path}`
   await Bun.write(filePath, fix.modifiedContent)
+  
+  const commitMsg = `fix: address review comment by @${fix.reviewer}\n\nComment: ${fix.comment}`
+  
+  await safeSpawn(["git", "add", fix.path], { cwd: wtDir })
+  await safeSpawn(["git", "commit", "-m", commitMsg], { cwd: wtDir })
+  
+  // The branch name is raft-shadow/pr-{number}
+  // We need to push this to the PR's actual remote branch.
+  // We can get the PR's remote branch using the GitHub API or the PR metadata.
+  // The PR object has `headRefName` which is the remote branch name.
+  // Let's assume the remote is 'origin'.
+  const branchName = `raft-shadow/pr-${pr.number}`
+  await safeSpawn(["git", "push", "origin", `${branchName}:${pr.headRefName}`], { cwd: wtDir })
+  
+  await cleanupShadowWorktree(repoRoot, pr.number)
 }
 
 /**
