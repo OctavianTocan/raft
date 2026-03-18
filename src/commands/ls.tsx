@@ -558,6 +558,12 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       // Lifecycle action: copy PR URL for pinging reviewers
       renderer.copyToClipboardOSC52(selectedPR.url)
       showFlash(`Copied URL for #${selectedPR.number}. Ping your reviewers!`)
+    } else if (key.name === "o" && selectedPR) {
+      // Launch an Opencode AI session for this PR
+      import("../lib/opencode").then(({ launchOpencode }) => {
+        launchOpencode(selectedPR)
+        showFlash(`Opening Opencode for #${selectedPR.number}...`)
+      })
     }
   })
 
