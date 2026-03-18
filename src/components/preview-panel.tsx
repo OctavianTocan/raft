@@ -15,6 +15,7 @@ import React from "react"
 import type { PullRequest, PRPanelData, PanelTab } from "../lib/types"
 import { shortRepoName } from "../lib/format"
 import { Spinner } from "./spinner"
+import { PanelSkeleton } from "./skeleton"
 import { PanelBody } from "./panel-body"
 import { PanelComments } from "./panel-comments"
 import { PanelCode } from "./panel-code"
@@ -122,9 +123,12 @@ export function PreviewPanel({ pr, panelData, loading, tab, width, height, activ
 
       {/* Content area with native scrollbox */}
       <box flexGrow={1} overflow="hidden">
-        {loading ? (
-          <box paddingX={1}>
-            <Spinner text="Loading..." />
+        {loading && !panelData ? (
+          <box flexDirection="column" flexGrow={1}>
+            <box paddingX={1} height={1} marginBottom={1}>
+              <Spinner text="Loading..." />
+            </box>
+            <PanelSkeleton tab={tab} width={width - 4} height={contentHeight - 2} />
           </box>
         ) : panelData ? (
           <scrollbox

@@ -24,8 +24,8 @@ export interface PanelState {
   cacheRef: MutableRefObject<PRCache>
   setPanelOpen: (open: boolean) => void
   setPanelTab: (tab: PanelTab | ((prev: PanelTab) => PanelTab)) => void
-  setSplitRatio: (ratio: number | ((prev: number) => number)) => void
-  setPanelFullscreen: (fs: boolean | ((prev: boolean) => boolean)) => void
+  setSplitRatio: React.Dispatch<React.SetStateAction<number>>
+  setPanelFullscreen: React.Dispatch<React.SetStateAction<boolean>>
   setPanelData: (data: PRPanelData | null) => void
 }
 
@@ -48,8 +48,8 @@ export function usePanel(
 ): PanelState {
   const [panelOpen, setPanelOpen] = useState(false)
   const [panelTab, setPanelTab] = useState<PanelTab>("body")
-  const [splitRatio, setSplitRatio] = useState(LAYOUT.defaultSplitRatio)
-  const [panelFullscreen, setPanelFullscreen] = useState(false)
+  const [splitRatio, setSplitRatio] = useState<number>(LAYOUT.defaultSplitRatio)
+  const [panelFullscreen, setPanelFullscreen] = useState<boolean>(false)
   const [panelData, setPanelData] = useState<PRPanelData | null>(null)
   const [panelLoading, setPanelLoading] = useState(false)
   const cacheRef = useRef(new PRCache())
