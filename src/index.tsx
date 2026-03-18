@@ -9,9 +9,10 @@ import { LogCommand } from "./commands/log"
 import { MergeCommand } from "./commands/merge"
 import { SyncCommand } from "./commands/sync"
 import { NavCommand, CreateCommand, RestackCommand } from "./commands/nav"
+import { SplitCommand } from "./commands/split"
 
 type Command = "ls" | "stack" | "stack-sync" | "log" | "merge" | "sync"
-  | "create" | "up" | "down" | "restack" | "home" | "help"
+  | "create" | "up" | "down" | "restack" | "split" | "home" | "help"
 
 interface Config {
   command: Command
@@ -65,6 +66,7 @@ function parseArgs(argv: string[]): Config {
   if (command === "up") return { command: "up" }
   if (command === "down") return { command: "down" }
   if (command === "restack") return { command: "restack" }
+  if (command === "split") return { command: "split", repoFilter }
   return { command: "home" }
 }
 
@@ -86,6 +88,7 @@ Usage:
   raft up                      Move up in the current stack
   raft down                    Move down in the current stack
   raft restack                 Rebase stack onto parents
+  raft split                   View split-branch state
   raft --help                  Show this help message`)
 }
 
@@ -207,6 +210,9 @@ switch (config.command) {
     break
   case "restack":
     root.render(<RestackCommand />)
+    break
+  case "split":
+    root.render(<SplitCommand repo={config.repoFilter} />)
     break
   default:
     root.render(<HomeScreen />)
