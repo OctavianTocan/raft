@@ -1,312 +1,149 @@
 import type { PullRequest, PRDetails, Review, PRPanelData, Comment, CodeComment, FileDiff } from "./types"
 import { STACK_COMMENT_MARKER } from "./types"
-import { safeSpawn, buildCleanEnv } from "./process"
+import { safeSpawn } from "./process"
 import { hydrateCodeComments } from "./review-threads"
+import { getGithubToken } from "./auth"
 
-interface RawSearchResult {
-  number: number
-  title: string
-  url: string
-  body: string
-  state: string
-  isDraft: boolean
-  repository: { nameWithOwner: string }
-  createdAt: string
-  author?: { login: string }
+export async function fetchGh(endpoint: string, options: RequestInit = {}): Promise<any> {
+  const token = await getGithubToken();
+  const url = endpoint.startsWith("http") ? endpoint : `https://api.github.com/${endpoint.replace(/^\//, "")}`;
+  
+  const headers = new Headers(options.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  if (!headers.has("Accept")) {
+    headers.set("Accept", "application/vnd.github.v3+json");
+  }
+  
+  const response = await fetch(url, { ...options, headers });
+  
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`GitHub API error ${response.status}: ${text}`);
+  }
+  
+  if (response.status === 204) {
+    return {};
+  }
+  
+  return response.json();
 }
 
-/**
- * Parse GitHub search JSON results into PullRequest objects.
- *
- * Converts raw GitHub CLI JSON output from `gh search prs` into a normalized
- * PullRequest array. Truncates body to first line and 80 characters.
- *
- * @param jsonStr - Raw JSON string from GitHub CLI search output
- * @returns Array of normalized PullRequest objects
- */
-export function parseSearchResults(jsonStr: string): PullRequest[] {
-  const raw: RawSearchResult[] = JSON.parse(jsonStr)
-  return raw.map((pr) => {
-    const firstLine = (pr.body ?? "").split("\n")[0] ?? ""
+export async function fetchGhGraphql(query: string, variables: any = {}): Promise<any> {
+  const token = await getGithubToken();
+  const response = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ query, variables })
+  });
+
+  if (!response.ok) {
+    throw new Error(`GraphQL error ${response.status}: ${await response.text()}`);
+  }
+
+  const json = await response.json();
+  if (json.errors) {
+    throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`);
+  }
+
+  return json.data;
+}
+
+export function parseSearchResults(items: any[]): PullRequest[] {
+  return items.map((pr) => {
+    const firstLine = (pr.body ?? "").split("\n")[0] ?? "";
+    const repoUrlParts = pr.repository_url.split("/");
+    const repo = `${repoUrlParts[repoUrlParts.length - 2]}/${repoUrlParts[repoUrlParts.length - 1]}`;
     return {
       number: pr.number,
       title: pr.title,
-      url: pr.url,
+      url: pr.html_url,
       body: firstLine.slice(0, 80),
       state: pr.state,
-      isDraft: pr.isDraft,
-      repo: pr.repository.nameWithOwner,
+      isDraft: pr.draft || false,
+      repo,
       headRefName: "",
       baseRefName: "",
-      createdAt: pr.createdAt,
-      author: pr.author?.login,
+      createdAt: pr.created_at,
+      author: pr.user?.login,
     }
-  })
+  });
 }
 
-/**
- * Remove stack numbering prefix from a PR title.
- *
- * Strips the `[n/m]` prefix that marks PR position in a stacked series.
- * Example: `[2/4] Add auth` becomes `Add auth`.
- *
- * @param title - PR title potentially prefixed with stack notation
- * @returns Title without the prefix
- */
 export function stripStackPrefix(title: string): string {
   return title.replace(/^\[\d+\/\d+\]\s*/, "")
 }
 
-async function runGh(args: string[]): Promise<string> {
-  // Use safeSpawn to prevent fd leaks that caused segfaults after ~72s
-  const { stdout, stderr, exitCode } = await safeSpawn(["gh", ...args], {
-    env: buildCleanEnv(),
-  })
-  if (exitCode !== 0) {
-    throw new Error(`gh ${args.join(" ")} failed: ${stderr}`)
-  }
-  return stdout
-}
-
-type GhRunner = typeof runGh
-
-/** Get all authenticated gh account usernames. */
 export async function getGhAccounts(): Promise<string[]> {
-  try {
-    const output = await runGh(["auth", "status"])
-    // Parse account names from "Logged in to github.com account <name>"
-    const accounts: string[] = []
-    for (const line of output.split("\n")) {
-      const match = line.match(/account\s+(\S+)/)
-      if (match) accounts.push(match[1])
-    }
-    return accounts
-  } catch (e) {
-    // gh auth status exits non-zero sometimes; parse stderr too
-    const msg = e instanceof Error ? e.message : ""
-    const accounts: string[] = []
-    for (const line of msg.split("\n")) {
-      const match = line.match(/account\s+(\S+)/)
-      if (match) accounts.push(match[1])
-    }
-    return accounts.length > 0 ? accounts : ["@me"]
-  }
+  // Not heavily used with fetch paradigm, just return dummy since token implies identity
+  return ["@me"]
 }
 
-/** Get the currently active gh account. */
-async function getActiveAccount(): Promise<string | null> {
-  try {
-    const output = await runGh(["auth", "status"])
-    const lines = output.split("\n")
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes("Active account: true")) {
-        // Account name is on a preceding line
-        for (let j = i - 1; j >= 0; j--) {
-          const match = lines[j].match(/account\s+(\S+)/)
-          if (match) return match[1]
-        }
-      }
-    }
-  } catch { /* ignore */ }
-  return null
-}
-
-async function switchAccount(username: string): Promise<void> {
-  await runGh(["auth", "switch", "--user", username])
-}
-
-/** Fetch open PRs across all gh accounts, deduped by URL.
- *  Switches accounts and uses @me for each, since the GitHub username
- *  may not match the PR author (e.g., org-linked accounts). */
 export async function fetchAllAccountPRs(
   onProgress?: (status: string) => void,
 ): Promise<PullRequest[]> {
-  onProgress?.("Discovering accounts...")
-  const accounts = await getGhAccounts()
-  const originalAccount = await getActiveAccount()
-  const allPRs: PullRequest[] = []
-  const seen = new Set<string>()
-
-  for (let i = 0; i < accounts.length; i++) {
-    const account = accounts[i]
-    onProgress?.(`Fetching PRs for ${account} (${i + 1}/${accounts.length})...`)
-    if (accounts.length > 1) {
-      try { await switchAccount(account) } catch { continue }
-    }
-    try {
-      const json = await runGh([
-        "search", "prs",
-        "--author=@me",
-        "--state=open",
-        "--limit=100",
-        "--json", "number,title,url,body,state,repository,isDraft,createdAt",
-      ])
-      if (json) {
-        const parsed = parseSearchResults(json)
-        for (const pr of parsed) {
-          if (!seen.has(pr.url)) {
-            seen.add(pr.url)
-            allPRs.push(pr)
-          }
-        }
-        onProgress?.(`Found ${allPRs.length} PRs so far...`)
-      }
-    } catch { /* skip account if query fails */ }
-  }
-
-  onProgress?.(`Loaded ${allPRs.length} PRs across ${accounts.length} accounts`)
-
-  // Restore original account
-  if (accounts.length > 1 && originalAccount) {
-    try { await switchAccount(originalAccount) } catch { /* ignore */ }
-  }
-
-  return allPRs
+  onProgress?.("Fetching PRs...");
+  const json = await fetchGh("search/issues?q=is:pr+is:open+author:@me&per_page=100");
+  return parseSearchResults(json.items);
 }
 
-/**
- * Fetch open pull requests for a specific author or all accessible repositories.
- *
- * - If `author` is undefined: fetches PRs across all authenticated accounts via `@me`.
- * - If `author` is empty string: fetches all open PRs accessible to the current account.
- * - If `author` is provided: fetches PRs by that specific author.
- *
- * @param author - GitHub username or empty string for all repos, undefined for @me across accounts
- * @param onProgress - Optional callback for progress status messages
- * @returns Array of open pull requests
- */
 export async function fetchOpenPRs(
   author?: string,
   onProgress?: (status: string) => void,
 ): Promise<PullRequest[]> {
   if (author === "") {
-    // Empty string means fetch all PRs across all repos the user has access to
-    onProgress?.("Fetching all open PRs...")
-    const json = await runGh([
-      "search", "prs",
-      "--state=open",
-      "--limit=1000",
-      "--json", "number,title,url,body,state,repository,isDraft,createdAt,author",
-    ])
-    if (!json) return []
-    return parseSearchResults(json)
+    onProgress?.("Fetching all open PRs...");
+    const json = await fetchGh("search/issues?q=is:pr+is:open&per_page=100");
+    return parseSearchResults(json.items);
   }
   if (author) {
-    onProgress?.(`Fetching PRs for ${author}...`)
-    const json = await runGh([
-      "search", "prs",
-      `--author=${author}`,
-      "--state=open",
-      "--limit=100",
-      "--json", "number,title,url,body,state,repository,isDraft,createdAt,author",
-    ])
-    if (!json) return []
-    return parseSearchResults(json)
+    onProgress?.(`Fetching PRs for ${author}...`);
+    const json = await fetchGh(`search/issues?q=is:pr+is:open+author:${author}&per_page=100`);
+    return parseSearchResults(json.items);
   }
-  return fetchAllAccountPRs(onProgress)
+  return fetchAllAccountPRs(onProgress);
 }
 
-/** Try fetching repo PRs, attempting each account if needed. */
 export async function fetchRepoPRs(repo: string): Promise<PullRequest[]> {
-  const accounts = await getGhAccounts()
-  const originalAccount = await getActiveAccount()
-
-  for (const account of accounts) {
-    if (accounts.length > 1) {
-      try { await switchAccount(account) } catch { continue }
-    }
-    try {
-      const json = await runGh([
-        "pr", "list",
-        "--repo", repo,
-        "--state=open",
-        "--limit=100",
-        "--json", "number,title,url,body,state,isDraft,headRefName,baseRefName,createdAt",
-      ])
-      // Restore original account before returning
-      if (accounts.length > 1 && originalAccount) {
-        try { await switchAccount(originalAccount) } catch { /* ignore */ }
-      }
-      if (!json) return []
-      const raw = JSON.parse(json) as Array<{
-        number: number
-        title: string
-        url: string
-        body: string
-        state: string
-        isDraft: boolean
-        headRefName: string
-        baseRefName: string
-        createdAt: string
-      }>
-      return raw.map((pr) => ({
-        number: pr.number,
-        title: pr.title,
-        url: `https://github.com/${repo}/pull/${pr.number}`,
-        body: (pr.body ?? "").split("\n")[0]?.slice(0, 80) ?? "",
-        state: pr.state,
-        isDraft: pr.isDraft,
-        repo,
-        headRefName: pr.headRefName,
-        baseRefName: pr.baseRefName,
-        createdAt: pr.createdAt,
-      }))
-    } catch {
-      // This account can't access the repo, try next
-      continue
-    }
+  try {
+    const prs = await fetchGh(`repos/${repo}/pulls?state=open&per_page=100`);
+    return prs.map((pr: any) => ({
+      number: pr.number,
+      title: pr.title,
+      url: pr.html_url,
+      body: (pr.body ?? "").split("\n")[0]?.slice(0, 80) ?? "",
+      state: pr.state,
+      isDraft: pr.draft || false,
+      repo,
+      headRefName: pr.head.ref,
+      baseRefName: pr.base.ref,
+      createdAt: pr.created_at,
+    }));
+  } catch {
+    return [];
   }
-
-  // Restore original account
-  if (accounts.length > 1 && originalAccount) {
-    try { await switchAccount(originalAccount) } catch { /* ignore */ }
-  }
-
-  return []
 }
 
-/**
- * Update a PR's title via the GitHub API.
- *
- * @param repo - Full repository name in `owner/repo` format
- * @param prNumber - The pull request number
- * @param title - New title for the PR
- */
 export async function updatePRTitle(repo: string, prNumber: number, title: string): Promise<void> {
-  await runGh(["pr", "edit", String(prNumber), "--repo", repo, "--title", title])
+  await fetchGh(`repos/${repo}/pulls/${prNumber}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title })
+  });
 }
 
-/**
- * Find the ID of a stacked PR's metadata comment.
- *
- * Searches for an issue comment containing the STACK_COMMENT_MARKER.
- * Used to locate and update stack information (rebase status, dependencies).
- *
- * @param repo - Full repository name in `owner/repo` format
- * @param prNumber - The pull request number
- * @returns Comment ID if found, null otherwise
- */
 export async function findStackComment(repo: string, prNumber: number): Promise<number | null> {
-  const json = await runGh([
-    "api",
-    `repos/${repo}/issues/${prNumber}/comments`,
-    "--jq", `.[] | select(.body | contains("${STACK_COMMENT_MARKER}")) | .id`,
-  ])
-  if (!json) return null
-  const id = parseInt(json.split("\n")[0], 10)
-  return isNaN(id) ? null : id
+  const comments = await fetchGh(`repos/${repo}/issues/${prNumber}/comments`);
+  for (const c of comments) {
+    if (c.body && c.body.includes(STACK_COMMENT_MARKER)) {
+      return c.id;
+    }
+  }
+  return null;
 }
 
-/**
- * Create or update a stacked PR's metadata comment.
- *
- * If a comment with STACK_COMMENT_MARKER exists, updates it. Otherwise creates a new one.
- * Used to track rebase status and dependencies in stacked PR workflows.
- *
- * @param repo - Full repository name in `owner/repo` format
- * @param prNumber - The pull request number
- * @param body - Body content (without marker; marker is added automatically)
- */
 export async function upsertStackComment(
   repo: string,
   prNumber: number,
@@ -314,242 +151,223 @@ export async function upsertStackComment(
 ): Promise<void> {
   const existingId = await findStackComment(repo, prNumber)
   const fullBody = `${STACK_COMMENT_MARKER}\n${body}`
+  
   if (existingId) {
-    await runGh([
-      "api",
-      `repos/${repo}/issues/comments/${existingId}`,
-      "--method", "PATCH",
-      "--field", `body=${fullBody}`,
-    ])
+    await fetchGh(`repos/${repo}/issues/comments/${existingId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: fullBody })
+    });
   } else {
-    await runGh([
-      "api",
-      `repos/${repo}/issues/${prNumber}/comments`,
-      "--method", "POST",
-      "--field", `body=${fullBody}`,
-    ])
+    await fetchGh(`repos/${repo}/issues/${prNumber}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: fullBody })
+    });
   }
 }
 
-/**
- * Get the current repository name from the working directory.
- *
- * Uses `gh repo view` to detect the repository that contains the current git checkout.
- * Returns null if not in a git repository or gh cannot determine the repo.
- *
- * @returns Repository name in `owner/repo` format, or null if not in a repository
- */
 export async function getCurrentRepo(): Promise<string | null> {
   try {
-    const result = await runGh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
-    return result || null
+    const { stdout } = await safeSpawn(["git", "config", "--get", "remote.origin.url"]);
+    const url = stdout.trim();
+    const match = url.match(/github\.com[:/](.+?)(?:\.git)?$/);
+    if (match) return match[1];
+    return null;
   } catch {
-    return null
+    return null;
   }
 }
 
-/** Helper: try fetching with account switching for repos that may need different auth */
-async function tryMultiAccountFetch<T>(
-  fetchFn: () => Promise<T>
-): Promise<T> {
-  const accounts = await getGhAccounts()
-  const originalAccount = await getActiveAccount()
+export async function batchFetchPRDetails(prs: {repo: string, number: number, url: string}[]): Promise<Map<string, PRDetails>> {
+  const resultMap = new Map<string, PRDetails>();
+  if (prs.length === 0) return resultMap;
 
-  // Try with current account first
-  try {
-    return await fetchFn()
-  } catch (firstError) {
-    // If there's only one account, rethrow
-    if (accounts.length <= 1) {
-      throw firstError
-    }
-
-    // Try other accounts
-    for (const account of accounts) {
-      if (account === originalAccount) continue
-      try {
-        await switchAccount(account)
-        const result = await fetchFn()
-        // Restore original account before returning
-        if (originalAccount) {
-          try { await switchAccount(originalAccount) } catch {}
+  // Chunk to avoid massive queries. Safe batch size: 20
+  const CHUNK_SIZE = 20;
+  for (let i = 0; i < prs.length; i += CHUNK_SIZE) {
+    const chunk = prs.slice(i, i + CHUNK_SIZE);
+    let query = "query {\\n";
+    for (let j = 0; j < chunk.length; j++) {
+      const pr = chunk[j];
+      const [owner, name] = pr.repo.split("/");
+      query += `
+        pr_${j}: repository(owner: "${owner}", name: "${name}") {
+          pullRequest(number: ${pr.number}) {
+            additions
+            deletions
+            comments { totalCount }
+            headRefName
+            headRefOid
+            mergeable
+            reviews(first: 100) {
+              nodes {
+                author { login }
+                state
+              }
+            }
+            reviewThreads(first: 100) {
+              nodes {
+                isResolved
+              }
+            }
+            commits(last: 1) {
+              nodes {
+                commit {
+                  statusCheckRollup {
+                    state
+                  }
+                }
+              }
+            }
+          }
         }
-        return result
-      } catch {
-        continue
+      `;
+    }
+    query += "}";
+
+    try {
+      const data = await fetchGhGraphql(query);
+      for (let j = 0; j < chunk.length; j++) {
+        const pr = chunk[j];
+        const prData = data[`pr_${j}`]?.pullRequest;
+        if (!prData) continue;
+
+        const reviews: Review[] = (prData.reviews?.nodes || []).map((r: any) => ({
+          user: r.author?.login || "unknown",
+          state: r.state
+        }));
+
+        const unresolvedThreadCount = (prData.reviewThreads?.nodes || [])
+          .filter((t: any) => !t.isResolved).length;
+
+        const checkState = prData.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state;
+        let ciStatus: "ready" | "pending" | "failing" | "unknown" = "unknown";
+        if (checkState === "SUCCESS") ciStatus = "ready";
+        else if (checkState === "PENDING") ciStatus = "pending";
+        else if (checkState === "FAILURE" || checkState === "ERROR") ciStatus = "failing";
+
+        const hasConflicts = prData.mergeable === "CONFLICTING";
+
+        resultMap.set(pr.url, {
+          additions: prData.additions,
+          deletions: prData.deletions,
+          commentCount: prData.comments?.totalCount || 0,
+          reviews,
+          headRefName: prData.headRefName,
+          unresolvedThreadCount,
+          ciStatus,
+          hasConflicts,
+        });
       }
+    } catch (e) {
+      console.error("GraphQL batch failed:", e);
     }
-
-    // Restore original account
-    if (originalAccount) {
-      try { await switchAccount(originalAccount) } catch {}
-    }
-    throw firstError
   }
+
+  return resultMap;
 }
 
-/** Fetch detailed PR metadata: additions, deletions, comments count, reviews. */
 export async function fetchPRDetails(repo: string, prNumber: number): Promise<PRDetails> {
-  return tryMultiAccountFetch(async () => {
-    const [prJson, reviewsJson] = await Promise.all([
-      runGh([
-        "api", `repos/${repo}/pulls/${prNumber}`,
-        "--jq", "{additions, deletions, comments, headRefName: .head.ref, headSha: .head.sha, mergeable, mergeable_state: .mergeable_state}",
-      ]),
-      runGh([
-        "api", `repos/${repo}/pulls/${prNumber}/reviews`,
-        "--jq", "[.[] | {user: .user.login, state: .state}]",
-      ]),
-    ])
-
-    const pr = JSON.parse(prJson) as {
-      additions: number
-      deletions: number
-      comments: number
-      headRefName: string
-      headSha: string
-      mergeable: boolean | null
-      mergeable_state: string | null
-    }
-    const reviews: Review[] = JSON.parse(reviewsJson)
-    const [ciStatus, reviewThreads] = await Promise.all([
-      fetchCIStatusWithRunner(repo, pr.headSha, runGh).catch(() => "unknown" as const),
-      fetchReviewThreadsWithRunner(repo, prNumber, runGh).catch(() => null),
-    ])
-    const unresolvedThreadCount = reviewThreads !== null
-      ? reviewThreads.filter((thread) => !thread.isResolved).length
-      : -1
-    const hasConflicts = pr.mergeable === false || pr.mergeable_state === "dirty"
-
-    return {
-      additions: pr.additions,
-      deletions: pr.deletions,
-      commentCount: pr.comments,
-      reviews,
-      headRefName: pr.headRefName,
-      unresolvedThreadCount,
-      ciStatus,
-      hasConflicts,
-    }
-  })
+  const map = await batchFetchPRDetails([{repo, number: prNumber, url: `https://github.com/${repo}/pull/${prNumber}`}]);
+  const details = map.get(`https://github.com/${repo}/pull/${prNumber}`);
+  if (!details) throw new Error("Failed to fetch PR details");
+  return details;
 }
 
-/** Fetch full PR data for the preview panel: body, conversation comments, code comments. */
 export async function fetchPRPanelData(repo: string, prNumber: number): Promise<PRPanelData> {
-  return tryMultiAccountFetch(async () => {
-    const [bodyJson, issueCommentsJson, codeCommentsJson, filesJson, reviewThreads] = await Promise.all([
-      runGh([
-        "api", `repos/${repo}/pulls/${prNumber}`,
-        "--jq", ".body",
-      ]),
-      runGh([
-        "api", `repos/${repo}/issues/${prNumber}/comments`,
-        "--jq", "[.[] | {author: .user.login, body: .body, createdAt: .created_at, authorAssociation: .author_association}]",
-      ]),
-      runGh([
-        "api", `repos/${repo}/pulls/${prNumber}/comments`,
-        "--jq", "[.[] | {id: .id, author: .user.login, body: .body, path: .path, line: (.line // .original_line // 0), diffHunk: .diff_hunk, createdAt: .created_at}]",
-      ]),
-      runGh([
-        "api", `repos/${repo}/pulls/${prNumber}/files`,
-        "--jq", "[.[] | {filename: .filename, status: .status, additions: .additions, deletions: .deletions, changes: .changes, patch: .patch, previousFilename: .previous_filename}]",
-      ]),
-      fetchReviewThreadsWithRunner(repo, prNumber, runGh).catch(() => []),
-    ])
+  const [prData, issueComments, codeComments, reviewThreads] = await Promise.all([
+    fetchGh(`repos/${repo}/pulls/${prNumber}`),
+    fetchGh(`repos/${repo}/issues/${prNumber}/comments`),
+    fetchGh(`repos/${repo}/pulls/${prNumber}/comments`),
+    fetchReviewThreads(repo, prNumber),
+  ]);
 
-    const body = bodyJson || ""
-    const comments: Comment[] = JSON.parse(issueCommentsJson || "[]")
-    const codeComments = hydrateCodeComments(
-      JSON.parse(codeCommentsJson || "[]") as CodeComment[],
-      reviewThreads,
-    )
-    const files: FileDiff[] = JSON.parse(filesJson || "[]")
+  // Fetch files with pagination
+  let allFiles: any[] = [];
+  let page = 1;
+  while (true) {
+    const filesPage = await fetchGh(`repos/${repo}/pulls/${prNumber}/files?per_page=100&page=${page}`);
+    if (filesPage && filesPage.length > 0) {
+      allFiles = allFiles.concat(filesPage);
+    }
+    if (!filesPage || filesPage.length < 100) break;
+    page++;
+  }
 
-    return { body, comments, codeComments, files }
-  })
+  const body = prData.body || "";
+  const comments: Comment[] = (issueComments || []).map((c: any) => ({
+    author: c.user?.login || "unknown",
+    body: c.body,
+    createdAt: c.created_at,
+    authorAssociation: c.author_association
+  }));
+
+  const rawCodeComments = (codeComments || []).map((c: any) => ({
+    id: c.id,
+    author: c.user?.login || "unknown",
+    body: c.body,
+    path: c.path,
+    line: c.line || c.original_line || 0,
+    diffHunk: c.diff_hunk,
+    createdAt: c.created_at
+  }));
+
+  const codeCommentsHydrated = hydrateCodeComments(rawCodeComments, reviewThreads);
+  
+  const formattedFiles: FileDiff[] = (allFiles || []).map((f: any) => ({
+    filename: f.filename,
+    status: f.status,
+    additions: f.additions,
+    deletions: f.deletions,
+    changes: f.changes,
+    patch: f.patch,
+    previousFilename: f.previous_filename
+  }));
+
+  return { body, comments, codeComments: codeCommentsHydrated, files: formattedFiles };
 }
 
-/** Valid review event types for the GitHub PR review API. */
 export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT"
 
-/**
- * Submits a PR review (approve, request changes, or comment) via the GitHub API.
- *
- * Uses the pull request review endpoint to create a review with the specified
- * event type and optional body text. Handles multi-account auth automatically.
- *
- * @param repo - Full repository name in `owner/repo` format.
- * @param prNumber - The pull request number.
- * @param event - The review action: APPROVE, REQUEST_CHANGES, or COMMENT.
- * @param body - Optional review comment body (required for REQUEST_CHANGES).
- */
 export async function submitPRReview(
   repo: string,
   prNumber: number,
   event: ReviewEvent,
   body?: string,
 ): Promise<void> {
-  return tryMultiAccountFetch(async () => {
-    const args = [
-      "api", "--method", "POST",
-      `repos/${repo}/pulls/${prNumber}/reviews`,
-      "--field", `event=${event}`,
-    ]
-    if (body) {
-      args.push("--field", `body=${body}`)
-    }
-    await runGh(args)
-  })
+  await fetchGh(`repos/${repo}/pulls/${prNumber}/reviews`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ? { event, body } : { event })
+  });
 }
 
-/**
- * Replies to an existing review comment on a pull request.
- *
- * Uses the pull request review comment reply endpoint. The `commentId` is
- * the ID of the review comment being replied to (from the Code tab).
- *
- * @param repo - Full repository name in `owner/repo` format.
- * @param prNumber - The pull request number.
- * @param commentId - The ID of the review comment to reply to.
- * @param body - The reply text.
- */
 export async function replyToReviewComment(
   repo: string,
   prNumber: number,
   commentId: number,
   body: string,
 ): Promise<void> {
-  return tryMultiAccountFetch(async () => {
-    await runGh([
-      "api", "--method", "POST",
-      `repos/${repo}/pulls/${prNumber}/comments/${commentId}/replies`,
-      "--field", `body=${body}`,
-    ])
-  })
+  await fetchGh(`repos/${repo}/pulls/${prNumber}/comments/${commentId}/replies`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body })
+  });
 }
 
-/**
- * Posts a general comment on a pull request (issue-level, not inline).
- *
- * @param repo - Full repository name in `owner/repo` format.
- * @param prNumber - The pull request number.
- * @param body - The comment text.
- */
 export async function postPRComment(
   repo: string,
   prNumber: number,
   body: string,
 ): Promise<void> {
-  return tryMultiAccountFetch(async () => {
-    await runGh([
-      "api", "--method", "POST",
-      `repos/${repo}/issues/${prNumber}/comments`,
-      "--field", `body=${body}`,
-    ])
-  })
+  await fetchGh(`repos/${repo}/issues/${prNumber}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body })
+  });
 }
 
-/** A review thread with resolution status and associated comments. */
 export interface ReviewThread {
   id: string
   isResolved: boolean
@@ -563,30 +381,8 @@ export interface ReviewThread {
   }>
 }
 
-/**
- * Fetch review threads with resolution status via GraphQL.
- *
- * Uses the pullRequest.reviewThreads connection to get thread-level
- * resolution state, which isn't available from the REST API.
- *
- * @param repo - Full repository name in owner/repo format.
- * @param prNumber - The pull request number.
- * @returns Array of review threads with their resolution status.
- */
 export async function fetchReviewThreads(repo: string, prNumber: number): Promise<ReviewThread[]> {
-  return tryMultiAccountFetch(() => fetchReviewThreadsWithRunner(repo, prNumber, runGh))
-}
-
-async function fetchReviewThreadsWithRunner(
-  repo: string,
-  prNumber: number,
-  ghRunner: GhRunner,
-): Promise<ReviewThread[]> {
   const [owner, name] = repo.split("/")
-  /**
-   * NOTE: Threads with >100 items or >50 comments per thread are truncated.
-   * Full pagination is deferred.
-   */
   const query = `query($owner: String!, $name: String!, $number: Int!) {
     repository(owner: $owner, name: $name) {
       pullRequest(number: $number) {
@@ -610,15 +406,8 @@ async function fetchReviewThreadsWithRunner(
     }
   }`
 
-  const result = await ghRunner([
-    "api", "graphql",
-    "-f", `query=${query}`,
-    "-F", `owner=${owner}`,
-    "-F", `name=${name}`,
-    "-F", `number=${prNumber}`,
-  ])
-  const data = JSON.parse(result)
-  const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []
+  const data = await fetchGhGraphql(query, { owner, name, number: prNumber });
+  const threads = data.repository?.pullRequest?.reviewThreads?.nodes ?? [];
   return threads.map((t: any) => ({
     id: t.id,
     isResolved: t.isResolved,
@@ -630,69 +419,36 @@ async function fetchReviewThreadsWithRunner(
       line: c.line,
       createdAt: c.createdAt,
     })),
-  }))
+  }));
 }
 
-/**
- * Resolve a review thread via GraphQL mutation.
- *
- * @param threadId - The GraphQL node ID of the review thread to resolve.
- */
 export async function resolveReviewThread(threadId: string): Promise<void> {
   const query = `mutation {
     resolveReviewThread(input: { threadId: "${threadId}" }) {
       thread { id isResolved }
     }
   }`
-
-  return tryMultiAccountFetch(async () => {
-    await runGh(["api", "graphql", "-f", `query=${query}`])
-  })
+  await fetchGhGraphql(query);
 }
 
-/**
- * Fetch CI check status for a PR's head commit.
- *
- * @param repo - Full repository name in owner/repo format.
- * @param ref - Git ref (branch name or SHA) to check.
- * @returns "ready" if all pass, "pending" if running, "failing" if any failed, "unknown" if status cannot be determined.
- */
 export async function fetchCIStatus(repo: string, ref: string): Promise<"ready" | "pending" | "failing" | "unknown"> {
   try {
-    return await tryMultiAccountFetch(() => fetchCIStatusWithRunner(repo, ref, runGh))
+    const checks: any = await fetchGh(`repos/${repo}/commits/${ref}/check-runs`);
+    const checkRuns = checks.check_runs || [];
+    if (checkRuns.length === 0) return "ready";
+    if (checkRuns.some((c: any) => ["failure", "timed_out", "cancelled", "action_required"].includes(c.conclusion ?? ""))) return "failing";
+    if (checkRuns.some((c: any) => c.status !== "completed")) return "pending";
+    return "ready";
   } catch {
-    return "unknown" // Can't determine status
+    return "unknown";
   }
 }
 
-async function fetchCIStatusWithRunner(
-  repo: string,
-  ref: string,
-  ghRunner: GhRunner,
-): Promise<"ready" | "pending" | "failing" | "unknown"> {
-  const result = await ghRunner(["api", `repos/${repo}/commits/${ref}/check-runs`, "--jq", ".check_runs"])
-  const checks = JSON.parse(result) as Array<{ status: string; conclusion: string | null }>
-  if (checks.length === 0) return "ready"
-  if (checks.some(c => ["failure", "timed_out", "cancelled", "action_required"].includes(c.conclusion ?? ""))) return "failing"
-  if (checks.some(c => c.status !== "completed")) return "pending"
-  return "ready"
-}
-
-/**
- * Check if a PR has merge conflicts.
- *
- * @param repo - Full repository name in owner/repo format.
- * @param prNumber - The pull request number.
- * @returns true if the PR has merge conflicts.
- */
 export async function fetchHasConflicts(repo: string, prNumber: number): Promise<boolean> {
   try {
-    const result = await tryMultiAccountFetch(async () => {
-      return runGh(["pr", "view", String(prNumber), "--repo", repo, "--json", "mergeable,mergeStateStatus"])
-    })
-    const data = JSON.parse(result) as { mergeable: string; mergeStateStatus: string }
-    return data.mergeable === "CONFLICTING" || data.mergeStateStatus === "DIRTY"
+    const pr: any = await fetchGh(`repos/${repo}/pulls/${prNumber}`);
+    return pr.mergeable === false || pr.mergeable_state === "dirty";
   } catch {
-    return false
+    return false;
   }
 }

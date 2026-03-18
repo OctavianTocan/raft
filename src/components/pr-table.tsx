@@ -46,7 +46,7 @@ function renderReviewStatus(reviewStatusStr: string) {
   return parts
 }
 
-function PRRow({ pr, isSelected, index, density, details, onSelect }: PRRowProps) {
+const PRRow = React.memo(function PRRow({ pr, isSelected, index, density, details, onSelect }: PRRowProps) {
   const dotColor = pr.isDraft ? "#6b7089" : "#9ece6a"
   const dot = pr.isDraft ? "\u25CB" : "\u25CF"
   const cursor = isSelected ? "\u25B8" : " "
@@ -222,7 +222,7 @@ function PRRow({ pr, isSelected, index, density, details, onSelect }: PRRowProps
   }
 
   return null
-}
+})
 
 export function PRTable({ prs, selectedIndex, density, detailsMap, onSelect, groupedData, groupMode }: PRTableProps) {
   if (prs.length === 0) {
