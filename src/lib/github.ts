@@ -276,13 +276,24 @@ export async function fetchPRDetails(repo: string, prNumber: number): Promise<PR
 }
 
 export async function fetchPRPanelData(repo: string, prNumber: number): Promise<PRPanelData> {
-  const [prData, issueComments, codeComments, files, reviewThreads] = await Promise.all([
+  const [prData, issueComments, codeComments, reviewThreads] = await Promise.all([
     fetchGh(`repos/${repo}/pulls/${prNumber}`),
     fetchGh(`repos/${repo}/issues/${prNumber}/comments`),
     fetchGh(`repos/${repo}/pulls/${prNumber}/comments`),
-    fetchGh(`repos/${repo}/pulls/${prNumber}/files?per_page=100`),
     fetchReviewThreads(repo, prNumber),
   ]);
+
+  // Fetch files with pagination
+  let allFiles: any[] = [];
+  let page = 1;
+  while (true) {
+    const filesPage = await fetchGh(`repos/${repo}/pulls/${prNumber}/files?per_page=100&page=${page}`);
+    if (filesPage && filesPage.length > 0) {
+      allFiles = allFiles.concat(filesPage);
+    }
+    if (!filesPage || filesPage.length < 100) break;
+    page++;
+  }
 
   const body = prData.body || "";
   const comments: Comment[] = (issueComments || []).map((c: any) => ({
@@ -304,7 +315,7 @@ export async function fetchPRPanelData(repo: string, prNumber: number): Promise<
 
   const codeCommentsHydrated = hydrateCodeComments(rawCodeComments, reviewThreads);
   
-  const formattedFiles: FileDiff[] = (files || []).map((f: any) => ({
+  const formattedFiles: FileDiff[] = (allFiles || []).map((f: any) => ({
     filename: f.filename,
     status: f.status,
     additions: f.additions,
