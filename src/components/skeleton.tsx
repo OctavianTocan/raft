@@ -54,3 +54,67 @@ export function SkeletonList({ rows = 10 }: SkeletonListProps) {
     </box>
   )
 }
+
+export function PanelSkeleton({ tab, width, height }: { tab: string; width: number; height: number }) {
+  if (tab === "body") {
+    return (
+      <box flexDirection="column" width={width} height={height} paddingX={1}>
+        <box height={1} marginBottom={1}><SkeletonBlock width={Math.floor(width * 0.4)} color="#292e42" /></box>
+        <box height={1}><SkeletonBlock width={Math.floor(width * 0.9)} color="#1f2335" /></box>
+        <box height={1}><SkeletonBlock width={Math.floor(width * 0.85)} color="#1f2335" /></box>
+        <box height={1} marginBottom={1}><SkeletonBlock width={Math.floor(width * 0.6)} color="#1f2335" /></box>
+        <box height={1}><SkeletonBlock width={Math.floor(width * 0.95)} color="#1f2335" /></box>
+        <box height={1}><SkeletonBlock width={Math.floor(width * 0.7)} color="#1f2335" /></box>
+      </box>
+    )
+  }
+
+  if (tab === "comments") {
+    return (
+      <box flexDirection="column" width={width} height={height} paddingX={1}>
+        <box height={1} marginBottom={1}><SkeletonBlock width={Math.floor(width * 0.3)} color="#292e42" /></box>
+        {[1, 2, 3].map(i => (
+          <box key={i} flexDirection="column" marginBottom={1}>
+            <box height={1}><SkeletonBlock width={Math.floor(width * 0.2)} color="#24283b" /></box>
+            <box height={1}><SkeletonBlock width={Math.floor(width * 0.8)} color="#1f2335" /></box>
+            <box height={1}><SkeletonBlock width={Math.floor(width * 0.6)} color="#1f2335" /></box>
+          </box>
+        ))}
+      </box>
+    )
+  }
+
+  if (tab === "code") {
+    return (
+      <box flexDirection="column" width={width} height={height} paddingX={1}>
+        <box height={1} marginBottom={1}><SkeletonBlock width={Math.floor(width * 0.3)} color="#292e42" /></box>
+        {[1, 2].map(i => (
+          <box key={i} flexDirection="column" marginBottom={1}>
+            <box height={1}><SkeletonBlock width={Math.floor(width * 0.4)} color="#24283b" /></box>
+            <box height={1}><SkeletonBlock width={Math.floor(width * 0.7)} color="#1f2335" /></box>
+            <box height={1}><SkeletonBlock width={Math.floor(width * 0.5)} color="#1f2335" /></box>
+          </box>
+        ))}
+      </box>
+    )
+  }
+
+  if (tab === "files") {
+    return (
+      <box flexDirection="column" width={width} height={height} paddingX={1}>
+        <box height={1} marginBottom={1}><SkeletonBlock width={Math.floor(width * 0.4)} color="#292e42" /></box>
+        {[1, 2].map(i => (
+          <box key={i} flexDirection="column" marginBottom={1}>
+            <box height={1}><text fg="#292e42">{"\u250C" + "\u2500".repeat(Math.min(width - 2, 40))}</text></box>
+            <box height={1}><SkeletonBlock width={Math.floor(width * 0.6)} color="#1f2335" /></box>
+            <box height={1}><SkeletonBlock width={Math.floor(width * 0.8)} color="#1f2335" /></box>
+            <box height={1}><SkeletonBlock width={Math.floor(width * 0.5)} color="#1f2335" /></box>
+            <box height={1}><text fg="#292e42">{"\u2514" + "\u2500".repeat(Math.min(width - 2, 40))}</text></box>
+          </box>
+        ))}
+      </box>
+    )
+  }
+
+  return null
+}
