@@ -342,10 +342,12 @@ Use a local persistent store, likely SQLite, containing:
 
 Primary likely options:
 
-- `gh` as auth/account discovery bootstrap
-- direct API calls for performance/reliability
+- local `gh` as the default account discovery/auth source
+- direct API calls for performance/reliability once account context is known
 - avoid UI scraping
 - repo webhooks optional later, not required
+
+Raft should be designed around the real workflow of multi-account local development machines, not a single in-app browser-auth session.
 
 ## MVP Scope
 
@@ -444,6 +446,15 @@ Mitigation:
 ## Product Thesis
 
 Raft wins if it becomes the place where PR state becomes visible.
+
+It should not try to do the work of PRs.
+It should tell humans and agents:
+
+- what exists
+- what changed
+- what matters
+- what deserves attention next
+es the place where PR state becomes visible.
 
 It should not try to do the work of PRs.
 It should tell humans and agents:
