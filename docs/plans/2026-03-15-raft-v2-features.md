@@ -6,13 +6,13 @@ Show stacks as an ASCII tree. When inside a repo, show that repo's stacks.
 When not in a repo, show all stacks across all repos.
 
 ```
-thirdear-ai/thirdear-webapp
+acme/web-app
   ● main
-  ├── #703 feat(analytics): add WebEngage SDK        OPEN   2d
-  │   └── #704 refactor(analytics): migrate events   OPEN   2d
-  ├── #643 tooling: replace ESLint with Biome        OPEN   3w
-  │   └── #645 tooling: add Vitest                   OPEN   3w
-  └── #718 fix(og): move OG meta to page-level       OPEN   1w
+  ├── #103 feat(analytics): add analytics SDK        OPEN   2d
+  │   └── #104 refactor(analytics): migrate events   OPEN   2d
+  ├── #143 tooling: replace ESLint with Biome        OPEN   3w
+  │   └── #145 tooling: add Vitest                   OPEN   3w
+  └── #118 fix(og): move OG meta to page-level       OPEN   1w
 ```
 
 Interactive: j/k to navigate, Enter to open in browser, q to quit.
