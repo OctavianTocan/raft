@@ -73,7 +73,7 @@ export function StatusView({ pr, details, lifecycle, flash, replyMode, replyText
           </text>
         ) : (
           <text fg="#6b7089">
-            Enter: open  c: copy  /: search  s: sort  v: view  g: group  p: preview  q: quit
+            Enter: open  c: copy  o: opencode  /: search  s: sort  v: view  g: group  p: preview  q: quit
           </text>
         )}
       </box>
