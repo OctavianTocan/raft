@@ -32,6 +32,57 @@ export function buildUnifiedDiff(file: FileDiff): string {
   return `--- ${oldDisplay}\n+++ ${newName}\n${file.patch}`
 }
 
+export type FileIntent = "Boilerplate" | "Config" | "Tests" | "Source Code"
+
+export function getFileIntent(filename: string): FileIntent {
+  const lower = filename.toLowerCase()
+  if (
+    lower.endsWith("yarn.lock") ||
+    lower.endsWith("package-lock.json") ||
+    lower.endsWith("pnpm-lock.yaml") ||
+    lower.endsWith("cargo.lock") ||
+    lower.endsWith("go.sum") ||
+    lower.endsWith("gemfile.lock") ||
+    lower.endsWith("poetry.lock") ||
+    lower.endsWith(".svg") ||
+    lower.endsWith(".png") ||
+    lower.endsWith(".snap") ||
+    lower.includes("generated")
+  ) {
+    return "Boilerplate"
+  }
+
+  if (
+    lower.endsWith(".test.ts") ||
+    lower.endsWith(".test.tsx") ||
+    lower.endsWith(".test.js") ||
+    lower.endsWith(".spec.ts") ||
+    lower.endsWith(".spec.tsx") ||
+    lower.endsWith(".spec.js") ||
+    lower.includes("__tests__/") ||
+    lower.includes("tests/") ||
+    lower.includes("test/")
+  ) {
+    return "Tests"
+  }
+
+  if (
+    lower.endsWith("package.json") ||
+    lower.endsWith("tsconfig.json") ||
+    lower.includes(".config.") ||
+    lower.endsWith(".yml") ||
+    lower.endsWith(".yaml") ||
+    lower.endsWith(".toml") ||
+    lower.endsWith(".ini") ||
+    lower === "dockerfile" ||
+    lower === "makefile"
+  ) {
+    return "Config"
+  }
+
+  return "Source Code"
+}
+
 /**
  * Detects the Tree-sitter language identifier from a filename's extension.
  *
@@ -141,70 +192,4 @@ export function getViewMode(
   return cols >= splitThreshold ? "split" : "unified"
 }
 
-/** Placeholder marker for collapsed diff regions. */
-export const COLLAPSE_MARKER = "@@COLLAPSED@@"
 
-/**
- * Collapse unchanged context regions in a unified diff.
- *
- * Identifies runs of context lines (those starting with " ") that
- * exceed the context threshold and replaces them with a collapse
- * marker showing how many lines were hidden. This makes large diffs
- * scannable by showing only changes + minimal surrounding context.
- *
- * @param patch - The unified diff patch string.
- * @param contextLines - Number of context lines to keep around each change (default 3).
- * @returns Object with collapsed patch and array of collapsed region info.
- */
-export function collapseDiffRegions(
-  patch: string,
-  contextLines: number = 3,
-): { collapsed: string; hiddenRegions: Array<{ startLine: number; count: number }> } {
-  const lines = patch.split("\n")
-  const result: string[] = []
-  const hiddenRegions: Array<{ startLine: number; count: number }> = []
-
-  let contextRun: string[] = []
-  let contextStartLine = 0
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    // Hunk headers, change lines, and "\ No newline" markers break context runs
-    if (line.startsWith("@@") || line.startsWith("+") || line.startsWith("-") || line.startsWith("\\")) {
-      // Flush any accumulated context
-      if (contextRun.length > contextLines * 2 + 1) {
-        // Keep first N context lines, collapse middle, keep last N
-        const kept = contextLines
-        for (let j = 0; j < kept; j++) result.push(contextRun[j])
-        const hidden = contextRun.length - kept * 2
-        hiddenRegions.push({ startLine: contextStartLine + kept, count: hidden })
-        result.push(`${COLLAPSE_MARKER} ${hidden} lines hidden`)
-        for (let j = contextRun.length - kept; j < contextRun.length; j++) result.push(contextRun[j])
-      } else {
-        // Context run is short enough, keep all
-        result.push(...contextRun)
-      }
-      contextRun = []
-      result.push(line)
-    } else {
-      // Context line (starts with " " or is empty in the diff)
-      if (contextRun.length === 0) contextStartLine = i
-      contextRun.push(line)
-    }
-  }
-
-  // Flush trailing context - symmetric with main loop
-  if (contextRun.length > contextLines * 2 + 1) {
-    const kept = contextLines
-    for (let j = 0; j < kept; j++) result.push(contextRun[j])
-    const hidden = contextRun.length - kept * 2
-    hiddenRegions.push({ startLine: contextStartLine + kept, count: hidden })
-    result.push(`${COLLAPSE_MARKER} ${hidden} lines hidden`)
-    for (let j = contextRun.length - kept; j < contextRun.length; j++) result.push(contextRun[j])
-  } else {
-    result.push(...contextRun)
-  }
-
-  return { collapsed: result.join("\n"), hiddenRegions }
-}

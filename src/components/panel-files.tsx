@@ -10,9 +10,10 @@
  * converted to unified diff format, then passed to the native `<diff>` element.
  */
 
-import React from "react"
+import React, { useMemo, useState } from "react"
+import { useKeyboard } from "@opentui/react"
 import type { FileDiff } from "../lib/types"
-import { buildUnifiedDiff, detectFiletype, getViewMode } from "../lib/diff-utils"
+import { buildUnifiedDiff, detectFiletype, getViewMode, getFileIntent, type FileIntent } from "../lib/diff-utils"
 import { DiffView } from "./diff-view"
 
 /**
@@ -102,6 +103,13 @@ function ExplanationBlock({ explanation, boxWidth }: { explanation: string; boxW
  */
 export function PanelFiles({ files, width }: PanelFilesProps) {
   const boxWidth = Math.max(width - 4, 40)
+  const [showBoilerplate, setShowBoilerplate] = useState(false)
+
+  useKeyboard((key) => {
+    if (key.sequence === "B") {
+      setShowBoilerplate((v) => !v)
+    }
+  })
 
   if (files.length === 0) {
     return (
@@ -115,6 +123,63 @@ export function PanelFiles({ files, width }: PanelFilesProps) {
   const totalAdd = files.reduce((sum, f) => sum + f.additions, 0)
   const totalDel = files.reduce((sum, f) => sum + f.deletions, 0)
   const explainedCount = files.filter(f => f.explanation).length
+
+  // Semantic Grouping
+  const groups = useMemo(() => {
+    const map: Record<FileIntent, FileDiff[]> = {
+      "Source Code": [],
+      "Tests": [],
+      "Config": [],
+      "Boilerplate": []
+    }
+    for (const f of files) {
+      map[getFileIntent(f.filename)].push(f)
+    }
+    return map
+  }, [files])
+
+  const renderFile = (file: FileDiff, isLast: boolean) => {
+    const name = file.status === "renamed" && file.previousFilename
+      ? `${file.previousFilename} \u2192 ${file.filename}`
+      : file.filename
+    const filetype = detectFiletype(file.filename)
+    const unifiedDiff = buildUnifiedDiff(file)
+    const viewMode = getViewMode(file.additions, file.deletions, width)
+
+    return (
+      <box key={file.filename} flexDirection="column" marginBottom={!isLast ? 1 : 0}>
+        {/* File header */}
+        <FileHeader name={name} file={file} boxWidth={boxWidth} />
+
+        {/* AI explanation if available */}
+        {file.explanation && (
+          <ExplanationBlock explanation={file.explanation} boxWidth={boxWidth} />
+        )}
+
+        {/* Native diff rendering */}
+        {unifiedDiff ? (
+          <DiffView
+            diff={unifiedDiff}
+            view={viewMode}
+            filetype={filetype}
+          />
+        ) : (
+          <box height={1}>
+            <text fg="#6b7089">Binary file or no diff available</text>
+          </box>
+        )}
+
+        {/* Separator between files */}
+        {!isLast && (
+          <box height={1} marginTop={1}>
+            <text fg="#3b3d57">{"\u2500".repeat(boxWidth)}</text>
+          </box>
+        )}
+      </box>
+    )
+  }
+
+  const intentOrder: FileIntent[] = ["Source Code", "Tests", "Config", "Boilerplate"]
 
   return (
     <box flexDirection="column" paddingX={1}>
@@ -131,46 +196,40 @@ export function PanelFiles({ files, width }: PanelFilesProps) {
             : "Press 'e' to generate AI explanations"}
         </text>
       </box>
-      <box height={1} />
+      <box height={1} marginBottom={1} />
 
-      {/* File diffs */}
-      {files.map((file, i) => {
-        const name = file.status === "renamed" && file.previousFilename
-          ? `${file.previousFilename} \u2192 ${file.filename}`
-          : file.filename
-        const filetype = detectFiletype(file.filename)
-        const unifiedDiff = buildUnifiedDiff(file)
-        const viewMode = getViewMode(file.additions, file.deletions, width)
+      {/* Grouped file diffs */}
+      {intentOrder.map((intent, groupIdx) => {
+        const groupFiles = groups[intent]
+        if (groupFiles.length === 0) return null
+
+        if (intent === "Boilerplate" && !showBoilerplate) {
+          const bAdd = groupFiles.reduce((s, f) => s + f.additions, 0)
+          const bDel = groupFiles.reduce((s, f) => s + f.deletions, 0)
+          return (
+            <box key="boilerplate-hidden" flexDirection="column" marginBottom={groupIdx < intentOrder.length - 1 ? 1 : 0}>
+              <box height={1}>
+                <text fg="#e0af68">
+                  {`\u25B6`} Boilerplate & Generated ({groupFiles.length} files, +{bAdd} -{bDel})
+                </text>
+              </box>
+              <box height={1}>
+                <text fg="#6b7089">  Press 'B' (Shift+b) to expand boilerplate files</text>
+              </box>
+            </box>
+          )
+        }
 
         return (
-          <box key={file.filename} flexDirection="column" marginBottom={i < files.length - 1 ? 1 : 0}>
-            {/* File header */}
-            <FileHeader name={name} file={file} boxWidth={boxWidth} />
+          <box key={intent} flexDirection="column" marginBottom={groupIdx < intentOrder.length - 1 ? 2 : 0}>
+            {/* Group Header */}
+            <box height={1} marginBottom={1}>
+              <text fg="#bb9af7">
+                {intent === "Boilerplate" ? `\u25BC ` : ""}[{intent}] ({groupFiles.length} files)
+              </text>
+            </box>
 
-            {/* AI explanation if available */}
-            {file.explanation && (
-              <ExplanationBlock explanation={file.explanation} boxWidth={boxWidth} />
-            )}
-
-            {/* Native diff rendering */}
-            {unifiedDiff ? (
-              <DiffView
-                diff={unifiedDiff}
-                view={viewMode}
-                filetype={filetype}
-              />
-            ) : (
-              <box height={1}>
-                <text fg="#6b7089">Binary file or no diff available</text>
-              </box>
-            )}
-
-            {/* Separator between files */}
-            {i < files.length - 1 && (
-              <box height={1} marginTop={1}>
-                <text fg="#3b3d57">{"\u2500".repeat(boxWidth)}</text>
-              </box>
-            )}
+            {groupFiles.map((file, i) => renderFile(file, i === groupFiles.length - 1))}
           </box>
         )
       })}
