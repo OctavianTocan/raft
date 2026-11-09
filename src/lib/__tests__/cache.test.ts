@@ -35,8 +35,9 @@ describe("PRCache", () => {
 
   test("has() returns correct boolean", () => {
     const cache = new PRCache()
-    expect(cache.hasDetails("x")).toBe(false)
-    cache.setDetails("x", { additions: 0, deletions: 0, commentCount: 0, reviews: [], headRefName: "" })
-    expect(cache.hasDetails("x")).toBe(true)
+    const uniqueKey = "test-unique-key-" + Date.now();
+    expect(cache.hasDetails(uniqueKey)).toBe(false)
+    cache.setDetails(uniqueKey, { additions: 0, deletions: 0, commentCount: 0, reviews: [], headRefName: "" })
+    expect(cache.hasDetails(uniqueKey)).toBe(true)
   })
 })
