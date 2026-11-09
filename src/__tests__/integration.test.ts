@@ -76,21 +76,21 @@ describe("fetchOpenPRs (real gh CLI)", () => {
 
 describe("fetchRepoPRs (real gh CLI)", () => {
   test("returns PRs for a known repo with branch info", async () => {
-    // OctavianTocan/to-do-app has many open PRs
-    const prs = await fetchRepoPRs("OctavianTocan/to-do-app")
+    // cli/cli has many open PRs
+    const prs = await fetchRepoPRs("cli/cli")
     expect(Array.isArray(prs)).toBe(true)
     expect(prs.length).toBeGreaterThan(0)
 
     const pr = prs[0]
-    expect(pr.repo).toBe("OctavianTocan/to-do-app")
+    expect(pr.repo).toBe("cli/cli")
     expect(pr.headRefName).toBeTruthy()
     expect(pr.baseRefName).toBeTruthy()
     expect(pr.number).toBeGreaterThan(0)
-    expect(pr.url).toContain("github.com/OctavianTocan/to-do-app/pull/")
+    expect(pr.url).toContain("github.com/cli/cli/pull/")
   })
 
   test("body is truncated to max 80 chars single line", async () => {
-    const prs = await fetchRepoPRs("OctavianTocan/to-do-app")
+    const prs = await fetchRepoPRs("cli/cli")
     for (const pr of prs) {
       expect(pr.body.length).toBeLessThanOrEqual(80)
       expect(pr.body).not.toContain("\n")
@@ -98,7 +98,7 @@ describe("fetchRepoPRs (real gh CLI)", () => {
   })
 
   test("all PRs have the correct repo field set", async () => {
-    const repo = "OctavianTocan/to-do-app"
+    const repo = "cli/cli"
     const prs = await fetchRepoPRs(repo)
     for (const pr of prs) {
       expect(pr.repo).toBe(repo)
@@ -193,7 +193,7 @@ describe("formatStackedTitle", () => {
 
 describe("end-to-end: fetch -> detect -> format", () => {
   test("full pipeline works for a real repo", async () => {
-    const prs = await fetchRepoPRs("OctavianTocan/to-do-app")
+    const prs = await fetchRepoPRs("cli/cli")
     expect(prs.length).toBeGreaterThan(0)
 
     const stacks = detectStacks(prs)

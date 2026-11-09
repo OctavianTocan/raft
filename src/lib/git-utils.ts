@@ -39,6 +39,19 @@ export async function runGhMerge(repo: string, prNumber: number): Promise<void> 
 }
 
 /**
+ * Get the absolute path to the root of the local git repository.
+ *
+ * @returns Absolute path to repo root, or null if not in a git repo.
+ */
+export async function getRepoRoot(): Promise<string | null> {
+  try {
+    const { stdout } = await safeSpawn(["git", "rev-parse", "--show-toplevel"])
+    return stdout.trim()
+  } catch {
+    return null
+  }
+}
+/**
  * Check CI status for a PR.
  *
  * Handles gh pr checks exit codes:

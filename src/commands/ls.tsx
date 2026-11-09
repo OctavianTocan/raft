@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
 import { Spinner } from "../components/spinner"
 import { SkeletonList } from "../components/skeleton"
 import { StatusView } from "../components/status-view"
-import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, submitPRReview, postPRComment, replyToReviewComment, resolveReviewThread } from "../lib/github"
+import { fetchOpenPRs, getCurrentRepo, batchFetchPRDetails, submitPRReview, postPRComment, replyToReviewComment, resolveReviewThread } from "../lib/github"
 import { shortRepoName } from "../lib/format"
 import { PreviewPanel } from "../components/preview-panel"
 import { usePanel } from "../hooks/usePanel"
@@ -12,6 +12,10 @@ import { detectPRState, compareByUrgency } from "../lib/pr-lifecycle"
 import { findNextUnresolvedCommentIndex, getCodeCommentThreadStats, markThreadResolved } from "../lib/review-threads"
 import type { PullRequest, Density, PRDetails, PanelTab, PRPanelData, PRLifecycleInfo } from "../lib/types"
 import { groupByRepo, groupByStack, groupByRepoAndStack, type GroupMode, type GroupedData } from "../lib/grouping"
+import { getCachedPRs, cachePRs, getGeneratedFixes, clearGeneratedFix } from "../lib/db"
+import { runBackgroundDaemon } from "../lib/daemon"
+import { applyFix } from "../lib/ai-fix"
+import { getRepoRoot } from "../lib/git-utils"
 
 interface LsCommandProps {
   author?: string
@@ -53,6 +57,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [replyText, setReplyText] = useState("")
   const [replyCommentId, setReplyCommentId] = useState<number | null>(null)
   const [activeCodeCommentIndex, setActiveCodeCommentIndex] = useState(0)
+  const [fixUpdateTrigger, setFixUpdateTrigger] = useState(0)
 
   // Detect current repo on mount
   useEffect(() => {
@@ -68,22 +73,37 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   }, [initialRepoFilter])
 
   useEffect(() => {
+    const cached = getCachedPRs()
+    if (cached.length > 0) {
+      const sorted = [...cached].sort((a, b) => {
+        const repoCompare = a.repo.localeCompare(b.repo)
+        if (repoCompare !== 0) return repoCompare
+        return a.number - b.number
+      })
+      setAllPRs(sorted)
+      setLoading(false)
+    }
+
+    let mounted = true
     async function load() {
       try {
         let results = await fetchOpenPRs(author, setLoadingStatus)
+        if (!mounted) return
         results.sort((a, b) => {
           const repoCompare = a.repo.localeCompare(b.repo)
           if (repoCompare !== 0) return repoCompare
           return a.number - b.number
         })
         setAllPRs(results)
+        cachePRs(results)
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to fetch PRs")
+        if (!cached.length) setError(e instanceof Error ? e.message : "Failed to fetch PRs")
       } finally {
-        setLoading(false)
+        if (mounted) setLoading(false)
       }
     }
     load()
+    return () => { mounted = false }
   }, [author])
 
   // Get unique repos and authors for cycling
@@ -99,6 +119,8 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
 
   const [authorFilter, setAuthorFilter] = useState<string | null>(null)
 
+  const deferredSearchQuery = useDeferredValue(searchQuery)
+
   const filteredPRs = useMemo(() => {
     let prs = allPRs
     // Repo filter
@@ -113,8 +135,8 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     if (statusFilter === "open") prs = prs.filter((pr) => !pr.isDraft)
     if (statusFilter === "draft") prs = prs.filter((pr) => pr.isDraft)
     // Search filter
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase()
+    if (deferredSearchQuery) {
+      const q = deferredSearchQuery.toLowerCase()
       prs = prs.filter((pr) =>
         pr.title.toLowerCase().includes(q) ||
         shortRepoName(pr.repo).toLowerCase().includes(q) ||
@@ -122,17 +144,39 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         String(pr.number).includes(q)
       )
     }
-    // Sort
-    prs = [...prs].sort((a, b) => {
+    return prs
+  }, [allPRs, repoFilter, authorFilter, statusFilter, deferredSearchQuery])
+
+  const urgencyMap = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const pr of filteredPRs) {
+      const details = detailsMap.get(pr.url) ?? null
+      const state = detectPRState(pr, details)
+      let urgency = state.urgency
+      
+      // Auto-fixes are the absolute highest priority (urgency 110)
+      if (getGeneratedFixes(pr.url).length > 0) {
+        urgency = 110
+      }
+      
+      map.set(pr.url, urgency)
+    }
+    return map
+  }, [filteredPRs, detailsMap, fixUpdateTrigger])
+
+  const sortedPRs = useMemo(() => {
+    const copy = [...filteredPRs]
+    const timestamps = sortMode === "age" 
+      ? new Map(copy.map(pr => [pr.url, new Date(pr.createdAt).getTime()]))
+      : null
+    
+    return copy.sort((a, b) => {
       switch (sortMode) {
         case "attention": {
-          // Sort by lifecycle urgency score (computed below in lifecycleMap)
-          const aState = detailsMap.has(a.url) ? detectPRState(a, detailsMap.get(a.url)!) : detectPRState(a, null)
-          const bState = detailsMap.has(b.url) ? detectPRState(b, detailsMap.get(b.url)!) : detectPRState(b, null)
-          return compareByUrgency(
-            { urgency: aState.urgency, createdAt: a.createdAt },
-            { urgency: bState.urgency, createdAt: b.createdAt },
-          )
+          const aUrg = urgencyMap.get(a.url) ?? 0
+          const bUrg = urgencyMap.get(b.url) ?? 0
+          if (aUrg !== bUrg) return bUrg - aUrg
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         }
         case "repo": {
           const rc = a.repo.localeCompare(b.repo)
@@ -140,7 +184,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         }
         case "number": return a.number - b.number
         case "title": return a.title.localeCompare(b.title)
-        case "age": return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        case "age": return timestamps!.get(b.url)! - timestamps!.get(a.url)!
         case "status": {
           const sc = Number(a.isDraft) - Number(b.isDraft)
           return sc !== 0 ? sc : a.repo.localeCompare(b.repo)
@@ -148,66 +192,71 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         default: return 0
       }
     })
-    return prs
-  }, [allPRs, repoFilter, authorFilter, statusFilter, searchQuery, sortMode, detailsMap])
+  }, [filteredPRs, sortMode, urgencyMap])
 
   // Grouped data computation
   const groupedData = useMemo(() => {
     if (groupMode === "none") return null
 
     if (groupMode === "repo") {
-      return groupByRepo(filteredPRs)
+      return groupByRepo(sortedPRs)
     } else if (groupMode === "stack") {
-      return groupByStack(filteredPRs)
+      return groupByStack(sortedPRs)
     } else if (groupMode === "repo-stack") {
-      return groupByRepoAndStack(filteredPRs)
+      return groupByRepoAndStack(sortedPRs)
     }
     return null
-  }, [filteredPRs, groupMode])
+  }, [sortedPRs, groupMode])
 
   useEffect(() => {
-    if (selectedIndex >= filteredPRs.length) {
-      setSelectedIndex(Math.max(0, filteredPRs.length - 1))
+    if (selectedIndex >= sortedPRs.length) {
+      setSelectedIndex(Math.max(0, sortedPRs.length - 1))
     }
-  }, [filteredPRs.length, selectedIndex])
+  }, [sortedPRs.length, selectedIndex])
 
   // Always fetch details - needed for lifecycle state detection and attention sort
+  const prevDetailUrlsRef = useRef("")
+
   useEffect(() => {
     if (filteredPRs.length === 0) return
 
     const cache = cacheRef.current
     const toFetch = filteredPRs.filter(pr => !cache.hasDetails(pr.url))
-
-    if (toFetch.length === 0) {
-      // All cached, just update the map
+    
+    const urlFingerprint = filteredPRs.map(pr => pr.url).sort().join('\n')
+    
+    const buildMap = () => {
+      if (urlFingerprint === prevDetailUrlsRef.current && toFetch.length === 0) return
       const map = new Map<string, PRDetails>()
       for (const pr of filteredPRs) {
         const d = cache.getDetails(pr.url)
         if (d) map.set(pr.url, d)
       }
+      prevDetailUrlsRef.current = urlFingerprint
       setDetailsMap(map)
+      
+      // Start daemon when details map is updated
+      runBackgroundDaemon(filteredPRs, map, () => {
+        setFixUpdateTrigger(t => t + 1)
+      })
+    }
+
+    if (toFetch.length === 0) {
+      buildMap()
       return
     }
 
-    // Fetch missing details
-    Promise.all(
-      toFetch.map(async (pr) => {
-        try {
-          const details = await fetchPRDetails(pr.repo, pr.number)
-          cache.setDetails(pr.url, details)
-        } catch { /* skip on error */ }
-      })
-    ).then(() => {
-      const map = new Map<string, PRDetails>()
-      for (const pr of filteredPRs) {
-        const d = cache.getDetails(pr.url)
-        if (d) map.set(pr.url, d)
+    batchFetchPRDetails(toFetch).then((fetchedMap) => {
+      for (const [url, details] of fetchedMap.entries()) {
+        cache.setDetails(url, details)
       }
-      setDetailsMap(map)
+      buildMap()
+    }).catch(() => {
+      buildMap()
     })
   }, [filteredPRs])
 
-  const selectedPR = filteredPRs[selectedIndex] ?? null
+  const selectedPR = sortedPRs[selectedIndex] ?? null
 
   // Panel state management (shared hook handles data fetching + caching + prefetching)
   const panel = usePanel(selectedPR, filteredPRs, selectedIndex)
@@ -220,6 +269,12 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     const details = detailsMap.get(selectedPR.url) ?? null
     return detectPRState(selectedPR, details)
   }, [selectedPR, detailsMap])
+
+  const selectedFixes = useMemo(() => {
+    if (!selectedPR) return []
+    // We depend on fixUpdateTrigger to re-evaluate when daemon finishes a fix
+    return getGeneratedFixes(selectedPR.url)
+  }, [selectedPR, fixUpdateTrigger])
 
   useEffect(() => {
     if (!panelOpen || panelTab !== "code" || !panelData || panelData.codeComments.length === 0) {
@@ -237,7 +292,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     if (selectedIndex < listHeight) return 0
     return selectedIndex - listHeight + 1
   }, [selectedIndex, listHeight])
-  const visiblePRs = filteredPRs.slice(scrollOffset, scrollOffset + listHeight)
+  const visiblePRs = sortedPRs.slice(scrollOffset, scrollOffset + listHeight)
   const visibleSelectedIndex = selectedIndex - scrollOffset
 
   const showFlash = useCallback((msg: string) => {
@@ -245,9 +300,12 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     setTimeout(() => setFlash(null), 2000)
   }, [])
 
+  const scrollOffsetRef = useRef(scrollOffset)
+  scrollOffsetRef.current = scrollOffset
+
   const handleSelect = useCallback((index: number) => {
-    setSelectedIndex(scrollOffset + index)
-  }, [scrollOffset])
+    setSelectedIndex(scrollOffsetRef.current + index)
+  }, [])
 
   useKeyboard((key) => {
     if (searchMode) {
@@ -453,7 +511,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       if (repoFilter && !initialRepoFilter) { setRepoFilter(null); return }
       renderer.destroy()
     } else if (key.name === "j" || key.name === "down") {
-      setSelectedIndex((i) => Math.min(filteredPRs.length - 1, i + 1))
+      setSelectedIndex((i) => Math.min(sortedPRs.length - 1, i + 1))
     } else if (key.name === "k" || key.name === "up") {
       setSelectedIndex((i) => Math.max(0, i - 1))
     } else if (key.name === "enter" || key.name === "return") {
@@ -540,6 +598,39 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     } else if (key.name === "p") {
       setPanelOpen(true)
       setPanelTab("body")
+    } else if (key.name === "space" && selectedPR) {
+      // The Universal "Resolve" key: maps to the optimal next action based on context
+      if (selectedFixes.length > 0) {
+        showFlash("Applying AI fix...")
+        getRepoRoot().then((root) => {
+          if (!root) { showFlash("Error: Not in a local git repo."); return }
+          const fix = selectedFixes[0]
+          applyFix(fix, selectedPR, root)
+            .then(() => {
+              clearGeneratedFix(selectedPR.url, fix.threadId)
+              setFixUpdateTrigger(t => t + 1)
+              showFlash("Fix pushed to PR branch!")
+            })
+            .catch(() => showFlash("Failed to apply fix."))
+        })
+      } else if (selectedLifecycle?.state === "MERGE_NOW") {
+        showFlash("Merging PR...")
+        import("../lib/git-utils").then(({ runGhMerge }) => {
+          runGhMerge(selectedPR.repo, selectedPR.number)
+            .then(() => showFlash(`Merged #${selectedPR.number}!`))
+            .catch((e) => showFlash(`Merge failed: ${e instanceof Error ? e.message : "unknown"}`))
+        })
+      } else if (selectedLifecycle?.state === "FIX_REVIEW") {
+        setPanelOpen(true)
+        setPanelTab("code")
+        showFlash("Showing review threads. Waiting for AI fix generation...")
+      } else if (selectedLifecycle?.state === "PING_REVIEWERS") {
+        renderer.copyToClipboardOSC52(selectedPR.url)
+        showFlash(`Copied URL for #${selectedPR.number}. Ping your reviewers!`)
+      } else {
+        // Skip to next PR if no actionable item
+        setSelectedIndex((i) => Math.min(sortedPRs.length - 1, i + 1))
+      }
     } else if (key.name === "m" && selectedPR && selectedLifecycle?.state === "MERGE_NOW") {
       // Lifecycle action: merge an approved PR
       showFlash("Merging PR...")
@@ -561,8 +652,10 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     }
   })
 
-  const openCount = allPRs.filter((pr) => !pr.isDraft).length
-  const draftCount = allPRs.filter((pr) => pr.isDraft).length
+  const { openCount, draftCount } = useMemo(() => ({
+    openCount: allPRs.filter((pr) => !pr.isDraft).length,
+    draftCount: allPRs.filter((pr) => pr.isDraft).length,
+  }), [allPRs])
 
   if (error) {
     return (
@@ -595,7 +688,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         </box>
         <box>
           <text fg="#9aa5ce">
-            {filteredPRs.length} PRs  sort: {SORT_LABELS[sortMode]}  view: {density}  group: {groupMode === "none" ? "None" : groupMode === "repo-stack" ? "Repo→Stack" : groupMode}
+            {sortedPRs.length} PRs  sort: {SORT_LABELS[sortMode]}  view: {density}  group: {groupMode === "none" ? "None" : groupMode === "repo-stack" ? "Repo→Stack" : groupMode}
           </text>
         </box>
       </box>
@@ -692,10 +785,10 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
             groupedData={groupedData}
             groupMode={groupMode}
           />
-          {filteredPRs.length > listHeight && (
+          {sortedPRs.length > listHeight && (
             <box paddingX={1} height={1}>
               <text fg="#6b7089">
-                {scrollOffset + 1}-{Math.min(scrollOffset + listHeight, filteredPRs.length)} of {filteredPRs.length}
+                {scrollOffset + 1}-{Math.min(scrollOffset + listHeight, sortedPRs.length)} of {sortedPRs.length}
               </text>
             </box>
           )}
@@ -712,6 +805,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           replyMode={replyMode}
           replyText={replyText}
           panelOpen={panelOpen}
+          fixCount={selectedFixes.length}
         />
       ) : (
         <box flexDirection="column" paddingX={1} paddingY={1} borderColor="#292e42" border>

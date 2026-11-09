@@ -16,13 +16,14 @@ interface StatusViewProps {
   replyMode: boolean
   replyText: string
   panelOpen: boolean
+  fixCount?: number
 }
 
 /**
  * Renders a compact diagnostic status view for the selected PR.
  * Replaces the old repo/number/title/url footer with actionable intelligence.
  */
-export function StatusView({ pr, details, lifecycle, flash, replyMode, replyText, panelOpen }: StatusViewProps) {
+export function StatusView({ pr, details, lifecycle, flash, replyMode, replyText, panelOpen, fixCount = 0 }: StatusViewProps) {
   const reviewSummary = details ? buildReviewSummary(details) : ""
 
   return (
@@ -35,6 +36,9 @@ export function StatusView({ pr, details, lifecycle, flash, replyMode, replyText
           <span fg="#7aa2f7">{pr.number}</span>
           {lifecycle && (
             <span fg={lifecycle.color}> {lifecycle.label}</span>
+          )}
+          {fixCount > 0 && (
+            <span fg="#e0af68"> [Auto-Fix Ready]</span>
           )}
         </text>
       </box>
@@ -62,6 +66,11 @@ export function StatusView({ pr, details, lifecycle, flash, replyMode, replyText
           </text>
         ) : flash ? (
           <text fg="#9ece6a">{flash}</text>
+        ) : fixCount > 0 ? (
+          <text>
+            <span fg="#e0af68">Space: Review & Apply Fix</span>
+            <span fg="#6b7089">  Enter: open  c: copy  p: preview  q: quit</span>
+          </text>
         ) : lifecycle && lifecycle.keybind ? (
           <text>
             <span fg={lifecycle.color}>{lifecycle.keybind}: {lifecycle.action}</span>
