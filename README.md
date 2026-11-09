@@ -12,10 +12,10 @@ raft ls
   ▸ ● #24   ai-nexus           feat(ui): add AccessRequestBanner…          0d
     ● #7    ai-agent-workflow   Add dynamic resource fetching…              6d
     ● #8    ai-agent-workflow   Implement Multi-Source Research…            6d
-    ○ #1    esther-and-me-book  Add configurable drop-cap styling…          2w
-    ● #743  thirdear-webapp     feat(extension-handoff): add Chrome…        2d
-    ● #718  thirdear-webapp     fix(og): move OG meta to page-level…       1w
-    ○ #545  ThirdEar-CE         feat(message_listener): centralize…        3d
+    ○ #1    book-reader         Add configurable drop-cap styling…          2w
+    ● #58   web-app             feat(search): add keyboard shortcuts…       2d
+    ● #51   web-app             fix(seo): add page-level meta tags…        1w
+    ○ #12   browser-extension   feat(popup): centralize messages…          3d
   ┌──────────────────────────────────────────────────────────────────────┐
   │ OctavianTocan/ai-nexus #24                                          │
   │ feat(ui): add AccessRequestBanner component with animated expand…   │
@@ -105,16 +105,16 @@ raft detects stacks by analyzing branch targets. If PR #2's branch targets PR #1
 
 ```
 ● main
-├── #703 feat(analytics): add WebEngage SDK         [1/2]
-│   └── #704 refactor(analytics): migrate events    [2/2]
+├── #103 feat(analytics): add analytics SDK         [1/2]
+│   └── #104 refactor(analytics): migrate events    [2/2]
 ```
 
 `raft stack sync` renames the PR titles with `[1/2]`, `[2/2]` prefixes and posts a navigation comment on each PR:
 
 | | PR | Title |
 |---|---|---|
-| >> | [#703](…) | **feat(analytics): add WebEngage SDK** |
-| | [#704](…) | refactor(analytics): migrate events |
+| >> | [#103](…) | **feat(analytics): add analytics SDK** |
+| | [#104](…) | refactor(analytics): migrate events |
 
 No external service needed. Works with any GitHub repo.
 
@@ -125,7 +125,7 @@ raft automatically discovers all `gh` accounts on your machine:
 ```bash
 gh auth status
 # github.com: OctavianTocan (active)
-# github.com: OctavianTocan-TwinMind
+# github.com: OctavianTocan-Work
 ```
 
 `raft ls` fetches PRs from both accounts and deduplicates by URL. Repo-level commands (`raft merge`, `raft log`) try each account until one has access.
